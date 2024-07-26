@@ -1,8 +1,36 @@
-    - name: Ensure empty file exists
-      ansible.builtin.file:
-        path: /tmp/vars_files.yml
-        state: touch
+---
+- name: Ensure empty file exists
+  ansible.builtin.file:
+    path: /tmp/vars_files.yml
+    state: touch
 
-    - name: Include specific variables
-      include_vars:
-        file: /tmp/vars_files.yml
+- name: Include specific variables
+  include_vars:
+    file: /tmp/vars_files.yml
+---
+- name: Ensure empty file exists
+  ansible.builtin.file:
+    path: /tmp/vars.txt
+    state: touch
+
+- name: Append dynamic hostname to file
+  ansible.builtin.lineinfile:
+    path: /tmp/vars.txt
+    line: "{{ redhat_image }}: {{ redhat_image_tags }}"
+    insertafter: EOF
+  vars:
+        - redhat_image: 'test123'
+        - redhat_image_tags: '1.21, 1.22, 1.23'     
+---
+- name: Include appended hostnames for later use
+  ansible.builtin.include_vars:
+    file: /tmp/vars.txt
+
+- name: Display appended hostnames
+  debug:
+    var: test123
+
+- name: Ensure empty file exists
+  ansible.builtin.file:
+    path: /tmp/vars.txt
+    state: absent  
