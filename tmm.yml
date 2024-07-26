@@ -24,4 +24,11 @@
 - name: Remove file
   ansible.builtin.file:
     path: /tmp/vars.txt
-    state: absent  
+    state: absent
+
+---
+- name: Copy a file on the remote machine for editing
+  ansible.builtin.copy:
+    src: /tmp/vars.txt
+    dest: /tmp/vars.txt
+    remote_src: yes
