@@ -1,15 +1,6 @@
 ---
 - name: Ensure empty file exists
   ansible.builtin.file:
-    path: /tmp/vars_files.yml
-    state: touch
-
-- name: Include specific variables
-  include_vars:
-    file: /tmp/vars_files.yml
----
-- name: Ensure empty file exists
-  ansible.builtin.file:
     path: /tmp/vars.txt
     state: touch
 
