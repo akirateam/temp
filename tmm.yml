@@ -32,3 +32,9 @@
     src: /tmp/vars.txt
     dest: /tmp/vars.txt
     remote_src: yes
+---
+- name: Fetch variable file from remote host
+  ansible.builtin.fetch:
+    src: /tmp/vars.txt
+    dest: /tmp/vars.txt
+    
