@@ -1,10 +1,10 @@
 ---
-- name: Ensure empty file exists
+- name: Create empty file
   ansible.builtin.file:
     path: /tmp/vars.txt
     state: touch
 
-- name: Append dynamic hostname to file
+- name: Append dynamic tags to file
   ansible.builtin.lineinfile:
     path: /tmp/vars.txt
     line: "{{ redhat_image }}: {{ redhat_image_tags }}"
@@ -13,15 +13,15 @@
         - redhat_image: 'test123'
         - redhat_image_tags: '1.21, 1.22, 1.23'     
 ---
-- name: Include appended hostnames for later use
+- name: Include appended tags for later use
   ansible.builtin.include_vars:
     file: /tmp/vars.txt
 
-- name: Display appended hostnames
+- name: Display appended tags
   debug:
     var: test123
 
-- name: Ensure empty file exists
+- name: Remove file
   ansible.builtin.file:
     path: /tmp/vars.txt
     state: absent  
