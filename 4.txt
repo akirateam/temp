@@ -1,0 +1,81 @@
+Claro! Posso estruturar o documento com foco em redes e segurança, seguindo a ordem que você sugeriu. Vou incluir os componentes e ferramentas que você mencionou, com links para as documentações e explicações detalhadas.
+Documento de Homologação e Habilitação - ROSA HCP na AWS
+1. Introdução
+Este documento descreve a arquitetura de rede e os controles de segurança implementados para o ambiente Red Hat OpenShift Service on AWS (ROSA) HCP, versão 4.16, implantado na região América do Sul (Brasil) nas zonas de disponibilidade a, b e c. O objetivo é fornecer informações detalhadas para a homologação e habilitação do ambiente, demonstrando que ele atende aos requisitos de segurança, conformidade e operacionais da organização, com foco nas políticas NIST e CIS, para aplicações em containers e pods de mobile.
+2. Arquitetura da Rede
+A arquitetura de rede do ambiente ROSA HCP foi projetada para garantir alta disponibilidade, segurança e isolamento das aplicações. Os componentes principais da rede são:
+3. Pré-requisitos
+ * Contas da AWS:  Crie as contas da AWS necessárias para o ambiente ROSA HCP.
+   * Documentação: Criando uma conta da AWS [URL inválido removido]
+ * AWS CLI: Instale e configure a AWS CLI para interagir com os serviços da AWS.
+   * Documentação: Instalando a AWS CLI versão 2
+ * Permissões IAM:  Configure as permissões IAM necessárias para implantar e gerenciar o ROSA HCP.
+   * Documentação: Gerenciando o acesso ao ROSA [URL inválido removido]
+ * OpenShift CLI (oc): Instale a OpenShift CLI para interagir com o cluster OpenShift.
+   * Documentação:  Instalando o oc
+4. VPC (Virtual Private Cloud)
+ * Uma VPC dedicada é criada para hospedar o ambiente ROSA HCP, garantindo o isolamento de outros recursos na AWS.
+ * A VPC é configurada com subnets privadas nas zonas de disponibilidade a, b e c para garantir alta disponibilidade.
+ * As tabelas de roteamento são configuradas para direcionar o tráfego dentro da VPC e para a internet pública, quando necessário.
+   * Documentação: Trabalhando com VPCs
+5. Subnets
+ * Subnets privadas são criadas em cada zona de disponibilidade para hospedar os nós de controle e os nós de trabalho do cluster ROSA.
+ * As subnets privadas não possuem endereços IP públicos, garantindo que os nós do cluster não sejam acessíveis diretamente da internet.
+   * Documentação: Trabalhando com Subnets
+6. NAT Gateway
+ * Um NAT Gateway é configurado em cada zona de disponibilidade para permitir que os nós de trabalho em subnets privadas acessem a internet para baixar imagens de contêiner e atualizações de software.
+ * O NAT Gateway garante que o tráfego de saída dos nós de trabalho seja originado de um endereço IP público, enquanto os endereços IP privados dos nós permanecem ocultos.
+   * Documentação: Trabalhando com NAT Gateways
+7. Internet Gateway
+ * Embora o ambiente seja configurado para acesso privado, um Internet Gateway pode ser utilizado para fornecer acesso à internet para componentes específicos, como o Bastion Host (se necessário).
+   * Documentação: Trabalhando com Internet Gateways
+8. Security Groups
+ * Security Groups são utilizados para controlar o tráfego de rede de entrada e saída para os nós do cluster ROSA.
+ * Regras de segurança são configuradas para permitir apenas o tráfego necessário, bloqueando qualquer acesso não autorizado.
+   * Documentação: Trabalhando com Security Groups
+9. NLB (Network Load Balancer)
+ * Um NLB é configurado para distribuir o tráfego de rede entre os nós de trabalho do cluster ROSA.
+ * O NLB fornece um único ponto de entrada para as aplicações, garantindo alta disponibilidade e escalabilidade.
+   * Documentação: Trabalhando com Network Load Balancers
+10. ALB (Application Load Balancer)
+ * Um ALB pode ser configurado opcionalmente para rotear o tráfego entre dois clusters ROSA, permitindo que você distribua a carga de trabalho entre diferentes clusters.
+   * Documentação: Trabalhando com Application Load Balancers](https://docs.aws.amazon.com/pt_br/elasticloadbalancing/latest/application/introduction.html)
+11. Filtros de Firewall
+ * AWS Network Firewall ou outros firewalls podem ser utilizados para filtrar o tráfego de rede de entrada e saída na VPC.
+ * Regras de firewall são configuradas para bloquear tráfego malicioso e garantir a conformidade com as políticas de segurança.
+   * Documentação: AWS Network Firewall
+12. DNS
+ * Um serviço de DNS externo é utilizado para a resolução de nomes.
+ * O Route 53 pode ser utilizado para integrar o ambiente ROSA com o serviço de DNS externo.
+   * [Documentação:  Delegando uma zona hospedada pelo Route 53 para servidores de nomes externos [URL inválido removido]
+13. Bastion Host
+ * Um Bastion Host pode ser configurado em uma subnet pública para fornecer acesso administrativo seguro ao ambiente ROSA HCP.
+ * O Bastion Host permite que os administradores se conectem ao cluster ROSA por meio de SSH ou RDP, com autenticação multi-fator e outros controles de segurança.
+   * Documentação:  Criando um Bastion Host usando o Amazon EC2 [URL inválido removido]
+14. Automação
+ * Ferramentas de automação, como o AWS CloudFormation ou o Terraform, podem ser utilizadas para automatizar a implantação e a configuração da infraestrutura de rede.
+ * A automação garante a consistência da configuração e facilita a gestão do ambiente.
+   * Documentação: AWS CloudFormation
+   * Documentação:  Terraform
+Segurança:
+ * Compliance:
+   * O ROSA HCP e a AWS atendem a diversas normas e regulamentações de segurança, incluindo  requisitos do NIST e CIS.
+   * A AWS e a Red Hat fornecem certificações de conformidade e documentação que podem auxiliar na comprovação da aderência aos padrões NIST e CIS.
+   * NIST:  O ROSA HCP pode ser configurado para atender a diferentes frameworks do NIST, como o NIST 800-53 e o NIST Cybersecurity Framework. A AWS oferece recursos e serviços que auxiliam na implementação de controles de segurança alinhados com o NIST.
+   * CIS: O ROSA HCP pode ser configurado para atender aos benchmarks do CIS para Kubernetes e OpenShift. A Red Hat fornece guias e ferramentas para auxiliar na implementação das recomendações do CIS.
+ * Baseline de Segurança:
+   * O ROSA HCP implementa uma baseline de segurança robusta, que inclui:
+     * Controles de acesso baseados em funções (RBAC)
+     * Namespaces para isolamento de recursos
+     * Imagens de contêiner seguras
+     * Criptografia de dados em trânsito e em repouso
+     * Monitoramento de segurança e alertas com  AWS Security Hub, Microsoft Cloud Defender e RHACS.
+ * Gerenciamento de Vulnerabilidades:
+   * O ROSA HCP utiliza o Red Hat Security Advisories (RHSA) para fornecer informações sobre vulnerabilidades e patches de segurança.
+   * As atualizações de segurança são aplicadas automaticamente aos nós do cluster.
+   * Ferramentas de análise de vulnerabilidades, como o OpenSCAP, podem ser utilizadas para identificar e corrigir vulnerabilidades nas aplicações.
+Observações:
+ * Este documento ainda é um guia inicial e pode precisar de adaptações de acordo com as suas necessidades.
+ * As informações sobre a arquitetura, a configuração e os controles de segurança devem ser revisadas e validadas pela equipe de segurança da sua organização.
+ * É importante manter o documento atualizado com as alterações e novas informações relevantes.
+Com esta estrutura, o documento aborda os principais aspectos de redes e segurança do seu ambiente ROSA HCP, facilitando o processo de homologação e habilitação.
