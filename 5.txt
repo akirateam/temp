@@ -1,0 +1,101 @@
+Perguntas para Entrevista com PO - Squad CaaS (20 Perguntas):
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Conscientização e Priorização
+   Subcategoria: Importância da Gestão
+   Pergunta: Na sua visão como PO da Squad de CaaS, qual a importância da Gestão de Capacidade e Otimização para a estabilidade e o desempenho da plataforma de contêineres que vocês entregam?
+   Contexto: (O que a pergunta avalia?): Avalia o entendimento do PO sobre a relevância do tema para a Squad. (Por que isto é importante?): Uma compreensão clara da importância é o primeiro passo para a priorização. (Respostas?): Espera-se respostas que liguem a capacidade e otimização à estabilidade, performance, custos e experiência do usuário das aplicações rodando no CaaS.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Conscientização e Priorização
+   Subcategoria: Alinhamento com Objetivos
+   Pergunta: Como a Gestão de Capacidade e Otimização se alinha com os objetivos estratégicos e OKRs da sua Squad de CaaS? Existem metas específicas relacionadas a esses temas?
+   Contexto: (O que a pergunta avalia?): Avalia se a gestão de capacidade e otimização são consideradas prioridades estratégicas. (Por que isto é importante?): Garante que os esforços estejam alinhados com os resultados de negócio. (Respostas?): Espera-se que o PO mencione como a otimização contribui para a eficiência, redução de custos ou melhoria da performance que impactam os OKRs.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Implementação Prática
+   Subcategoria: Monitoramento de Recursos
+   Pergunta: Especificamente para a plataforma de contêineres, quais métricas avançadas vocês monitoram além do básico (CPU, memória)? (Ex: utilização de rede por pod, I/O de disco dos nós, etc.)
+   Contexto: (O que a pergunta avalia?): Avalia a profundidade do monitoramento. (Por que isto é importante?): Métricas avançadas podem revelar gargalos sutis. (Respostas?): Espera-se menção a métricas específicas do ambiente de contêineres.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Implementação Prática
+   Subcategoria: Dimensionamento e Escalabilidade
+   Pergunta: Além do autoscaling reativo, a Squad de CaaS utiliza alguma forma de dimensionamento preditivo ou proativo da capacidade dos clusters ou dos nós? Se sim, como funciona?
+   Contexto: (O que a pergunta avalia?): Avalia a maturidade das práticas de dimensionamento. (Por que isto é importante?): Dimensionamento proativo pode evitar problemas antes que eles aconteçam. (Respostas?): Espera-se discussão sobre análise de tendências históricas, previsão de demanda baseada em eventos, etc.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Implementação Prática
+   Subcategoria: Otimização de Recursos de Contêineres
+   Pergunta: A Squad de CaaS utiliza ferramentas ou processos automatizados para recomendar ou aplicar ajustes nos requests e limits dos pods com base no uso real dos recursos?
+   Contexto: (O que a pergunta avalia?): Avalia o nível de automação na otimização de contêineres. (Por que isto é importante?): A automação torna a otimização mais eficiente e contínua. (Respostas?): Espera-se menção a ferramentas como VPA em modo automático ou recomendações geradas por ferramentas de análise.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Implementação Prática
+   Subcategoria: Otimização de Rede e Armazenamento
+   Pergunta: Como a Squad de CaaS otimiza o uso da rede e do armazenamento para os contêineres? Existem políticas ou práticas específicas para garantir a eficiência nesses recursos?
+   Contexto: (O que a pergunta avalia?): Avalia a otimização de recursos além da computação. (Por que isto é importante?): Rede e armazenamento também podem ser gargalos e fontes de custo. (Respostas?): Espera-se discussão sobre Network Policies, otimização de tráfego, classes de armazenamento, políticas de retenção, etc.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Colaboração e Integração
+   Subcategoria: Responsabilidades Compartilhadas
+   Pergunta: Como a Squad de CaaS trabalha com as equipes de desenvolvimento das aplicações que rodam na plataforma para otimizar o consumo de recursos dessas aplicações (ex: otimização de código, uso eficiente de memória)?
+   Contexto: (O que a pergunta avalia?): Avalia a colaboração com os clientes internos da plataforma. (Por que isto é importante?): A otimização na camada da aplicação é fundamental. (Respostas?): Espera-se exemplos de comunicação, compartilhamento de métricas, workshops, etc.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Colaboração e Integração
+   Subcategoria: Interação com Observabilidade
+   Pergunta: Como a Squad de CaaS utiliza as ferramentas e os dados fornecidos pelo Chapter de Observabilidade para identificar problemas de capacidade e oportunidades de otimização? Quais dashboards ou alertas são mais relevantes?
+   Contexto: (O que a pergunta avalia?): Avalia o uso efetivo das ferramentas de observabilidade. (Por que isto é importante?): A observabilidade fornece os dados para a tomada de decisões informadas. (Respostas?): Espera-se menção a dashboards específicos, alertas configurados e como essas informações são usadas para investigar problemas.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Métricas e Resultados
+   Subcategoria: Métricas de Custo
+   Pergunta: Além das métricas de desempenho, a Squad de CaaS acompanha métricas de custo relacionadas à plataforma de contêineres? Quais são elas e como são utilizadas para impulsionar a otimização?
+   Contexto: (O que a pergunta avalia?): Avalia a consciência dos custos. (Por que isto é importante?): A otimização deve considerar o impacto financeiro. (Respostas?): Espera-se menção a custo por nó, custo por pod, custo de armazenamento, etc.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Métricas e Resultados
+   Subcategoria: Medição do Impacto da Otimização
+   Pergunta: Como a Squad de CaaS mede e demonstra o impacto das iniciativas de otimização que foram implementadas na plataforma de contêineres (redução de custos, melhoria de performance, aumento da densidade de recursos)?
+   Contexto: (O que a pergunta avalia?): Avalia a capacidade de quantificar os benefícios da otimização. (Por que isto é importante?): Demonstra o valor do trabalho realizado. (Respostas?): Espera-se exemplos de relatórios comparativos de custos ou desempenho antes e depois das otimizações.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Implementação Prática
+   Subcategoria: Gerenciamento do Ciclo de Vida dos Nós
+   Pergunta: Como a Squad de CaaS gerencia o ciclo de vida dos nós do cluster (provisionamento, atualização, substituição) considerando a capacidade e a otimização?
+   Contexto: (O que a pergunta avalia?): Avalia as práticas de gerenciamento da infraestrutura subjacente. (Por que isto é importante?): Um bom gerenciamento do ciclo de vida garante a eficiência e a segurança. (Respostas?): Espera-se discussão sobre estratégias de rolling updates, auto-provisionamento, desativação de nós ociosos, etc.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Implementação Prática
+   Subcategoria: Uso de Recursos Específicos (GPUs, etc.)
+   Pergunta: Se a plataforma CaaS suporta recursos específicos como GPUs, como a Squad gerencia a alocação e o uso eficiente desses recursos?
+   Contexto: (O que a pergunta avalia?): Avalia o gerenciamento de recursos especializados. (Por que isto é importante?): Recursos especializados geralmente são mais caros e exigem um gerenciamento cuidadoso. (Respostas?): Espera-se discussão sobre schedulers específicos, quotas, monitoramento do uso, etc.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Colaboração e Integração
+   Subcategoria: Resposta a Incidentes de Capacidade
+   Pergunta: Como a Squad de CaaS lida com incidentes relacionados à capacidade (ex: alta utilização de recursos causando lentidão nas aplicações)? Qual o processo de investigação e resolução?
+   Contexto: (O que a pergunta avalia?): Avalia a capacidade de resposta a problemas de capacidade. (Por que isto é importante?): Um processo eficaz minimiza o impacto nos serviços. (Respostas?): Espera-se descrição do fluxo de trabalho, ferramentas utilizadas para diagnóstico e ações de correção (escalonamento, rollback, etc.).
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Desafios e Melhorias
+   Subcategoria: Complexidade do Ambiente
+   Pergunta: Dada a complexidade de um ambiente de contêineres, quais são os maiores desafios para garantir a visibilidade e o controle da capacidade e otimização?
+   Contexto: (O que a pergunta avalia?): Reconhece os desafios inerentes à tecnologia. (Por que isto é importante?): Ajuda a focar em soluções práticas para superar esses desafios. (Respostas?): Podem incluir a natureza dinâmica dos contêineres, a grande quantidade de objetos a serem monitorados, a dificuldade em correlacionar métricas, etc.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Desafios e Melhorias
+   Subcategoria: Ferramentas e Automação
+   Pergunta: Existem ferramentas ou recursos de automação que a Squad de CaaS gostaria de ter ou explorar mais para melhorar a gestão de capacidade e otimização?
+   Contexto: (O que a pergunta avalia?): Identifica necessidades de ferramentas e automação. (Por que isto é importante?): Ferramentas adequadas e automação aumentam a eficiência. (Respostas?): Podem incluir sugestões de novas ferramentas de monitoramento, plataformas de otimização automática, etc.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Aspectos Futuros
+   Subcategoria: Novas Tecnologias e Abordagens
+   Pergunta: A Squad de CaaS está explorando ou planejando explorar novas tecnologias ou abordagens relacionadas à gestão de capacidade e otimização de contêineres (ex: eBPF para observabilidade mais granular, serverless containers)?
+   Contexto: (O que a pergunta avalia?): Avalia a visão de futuro e a busca por inovação. (Por que isto é importante?): Mantém a Squad atualizada com as melhores práticas. (Respostas?): Demonstra proatividade e interesse em evoluir.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Aspectos Futuros
+   Subcategoria: Integração com Outras Áreas
+   Pergunta: Como você vê a integração da gestão de capacidade e otimização da plataforma CaaS com outras áreas da infraestrutura (ex: rede, armazenamento fora do cluster) no futuro?
+   Contexto: (O que a pergunta avalia?): Avalia a visão sistêmica da gestão de capacidade. (Por que isto é importante?): Uma visão holística é essencial para evitar gargalos em outras partes da infraestrutura. (Respostas?): Espera-se considerações sobre a interdependência dos sistemas.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Cultura e Conscientização
+   Subcategoria: Disseminação do Conhecimento
+   Pergunta: Como a Squad de CaaS compartilha conhecimento e aprendizados sobre gestão de capacidade e otimização com outras Squads que utilizam a plataforma de contêineres?
+   Contexto: (O que a pergunta avalia?): Avalia a colaboração e a disseminação de boas práticas dentro da organização. (Por que isto é importante?): Promove um aprendizado contínuo e a adoção de melhores práticas por outras equipes. (Respostas?): Espera-se menção a documentação, workshops, comunidades de prática, etc.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: GreenOps
+   Subcategoria: Eficiência Energética
+   Pergunta: A Squad de CaaS considera aspectos de eficiência energética (GreenOps) na gestão da plataforma de contêineres? Existem iniciativas ou preocupações nesse sentido?
+   Contexto: (O que a pergunta avalia?): Introduz a perspectiva da sustentabilidade. (Por que isto é importante?): Alinha as práticas de TI com a responsabilidade ambiental. (Respostas?): Podem incluir otimização do uso de recursos para reduzir o consumo de energia, escolha de regiões de nuvem com menor impacto ambiental (se aplicável), etc.
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Melhoria Contínua
+   Subcategoria: Revisão e Adaptação
+   Pergunta: Com que frequência a Squad de CaaS revisa suas práticas de gestão de capacidade e otimização? Existe um processo formal para identificar áreas de melhoria e adaptar as estratégias conforme necessário?
+   Contexto: (O que a pergunta avalia?): Avalia a cultura de melhoria contínua. (Por que isto é importante?): Garante que as práticas se mantenham relevantes e eficazes ao longo do tempo. (Respostas?): Espera-se menção a revisões periódicas, análise de incidentes, retrospectivas, etc.
