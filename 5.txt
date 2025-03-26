@@ -203,3 +203,14 @@ Perguntas para Entrevista com PO - Squad CaaS (20 Perguntas - Versão 2):
    Subcategoria: Métricas de Sucesso da Otimização
    Pergunta: Além das métricas técnicas e de custo, como a Squad de CaaS define e acompanha as métricas de sucesso das iniciativas de otimização do ponto de vista do negócio ou da experiência do usuário das aplicações?
    Contexto: (O que a pergunta avalia?): Avalia o alinhamento da otimização com os resultados de negócio. (Por que isto é importante?): Garante que os esforços de otimização tragam valor real para a organização e para os usuários finais. (Respostas?): Espera-se menção a métricas como tempo de resposta das aplicações, taxa de conversão, satisfação do cliente, etc., e como a otimização da plataforma CaaS impacta esses indicadores.
+
+
+Pergunta Adicional (Foco em AIOps):
+ * Chapter: Gestão de Capacidade e Otimização
+   Categoria: Aspectos Futuros e Inovação
+   Subcategoria: Inteligência Artificial e Automação Preditiva
+   Pergunta: A Squad de CaaS explora ou tem planos de explorar a utilização de ferramentas ou práticas de AIOps (Inteligência Artificial para Operações de TI) para auxiliar na previsão de demanda de capacidade, detecção proativa de gargalos de recursos ou otimização automática da plataforma de contêineres? Se sim, quais ferramentas ou abordagens estão sendo consideradas?
+   Contexto: (O que a pergunta avalia?): Avalia a visão da Squad sobre a adoção de IA para otimizar a gestão de capacidade. (Por que isto é importante?): AIOps tem o potencial de automatizar tarefas complexas, identificar padrões que humanos podem perder e otimizar a infraestrutura de forma mais inteligente e proativa. (Respostas?): Espera-se que o PO mencione se a Squad está ciente do conceito de AIOps, se já utilizam alguma ferramenta com funcionalidades de IA (mesmo que não rotulada como AIOps), ou se há planos de investigar soluções nesse sentido. Pode-se mencionar ferramentas que oferecem análise preditiva de métricas, detecção de anomalias baseada em machine learning, ou recomendações automatizadas de otimização.
+Como Integrar esta Pergunta:
+Você pode incluir esta pergunta na seção de "Aspectos Futuros e Inovação" da sua entrevista, logo após as perguntas sobre novas tecnologias e abordagens. Ela complementa a visão da Squad sobre o futuro da plataforma CaaS e como eles pretendem evoluir suas práticas de gestão de capacidade.
+Boa continuação nas suas entrevistas!
