@@ -1,0 +1,8 @@
+# Assuming you have your OpenShift OAuth token stored in the $TOKEN variable
+# and the ACM API server endpoint in $ACM_API_URL
+
+# Get a list of all managed clusters
+curl -k -H "Authorization: Bearer $TOKEN" -H "Accept: application/json" "$ACM_API_URL/apis/cluster.open-cluster-management.io/v1/managedclusters"
+
+# Get details for a specific cluster named 'my-managed-cluster'
+curl -k -H "Authorization: Bearer $TOKEN" -H "Accept: application/json" "$ACM_API_URL/apis/cluster.open-cluster-management.io/v1/managedclusters/my-managed-cluster"
