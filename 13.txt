@@ -72,3 +72,42 @@ Considerações Adicionais
  * Métricas da Aplicação: Além das métricas de infraestrutura do Kubernetes (kube-state-metrics), certifique-se de que sua aplicação exponha métricas customizadas (se aplicável) que também podem ser coletadas pelo Prometheus e usadas para verificar a saúde a nível de negócio ou funcionalidade.
  * Eventos: Embora as métricas do Prometheus forneçam um estado atual e histórico, os eventos do Kubernetes (oc get events) fornecem informações detalhadas sobre o que aconteceu com um pod (criação, agendamento, início do contêiner, falhas de probe, etc.). Combinar a análise de métricas e eventos oferece uma visão mais completa.
 Ao incorporar a análise dessas métricas do Prometheus no seu pipeline de atualização e no monitoramento contínuo, você terá uma visibilidade robusta sobre a saúde dos seus pods no OpenShift ARO, permitindo identificar e reagir rapidamente a quaisquer problemas que possam surgir pré ou pós-atualização.
+
+---
+
+Com certeza. Ao considerar o "wait started", você provavelmente está se referindo ao tempo que um pod leva para sair do estado Pending e iniciar seus contêineres principais, o que está intimamente ligado à condição Initialized e ao ciclo de vida dos contêineres. Vamos detalhar como monitorar isso com as métricas do Prometheus no OpenShift ARO.
+Além das fases gerais do pod (Pending, Running, Succeeded, Failed, Unknown) e do status das probes (liveness e readiness), é fundamental observar o processo de inicialização dos contêineres, especialmente os init containers e o tempo que os contêineres de aplicação levam para começar a executar.
+Monitorando a Inicialização e o Início dos Contêineres
+No Kubernetes (e OpenShift), a condição Initialized de um pod torna-se True quando todos os init containers especificados para o pod foram concluídos com sucesso. Somente após a inicialização bem-sucedida, os contêineres de aplicação do pod são iniciados. O tempo que um pod passa na fase Pending pode ser influenciado pelo tempo de conclusão dos init containers, pelo tempo de download das imagens dos contêineres e pelo tempo de agendamento no nó.
+As métricas do kube-state-metrics fornecem visibilidade sobre o estado dos contêineres dentro de um pod.
+ * kube_pod_init_container_info: Esta métrica (tipo gauge) fornece informações sobre os init containers. Embora não indique diretamente o tempo de "wait started", ela pode ser combinada com outras métricas e observações para entender se a inicialização está ocorrendo.
+ * kube_pod_container_status_waiting_reason: Esta métrica (tipo gauge) indica a razão pela qual um contêiner está no estado Waiting. Razões comuns incluem ImagePullBackOff (problemas ao baixar a imagem), CrashLoopBackOff (o contêiner está falhando repetidamente) ou ContainerCreating (o sistema está criando o contêiner). Um contêiner pode estar em Waiting no início enquanto a imagem é baixada ou init containers estão rodando.
+ * kube_pod_container_status_running: Já mencionada, indica se um contêiner está no estado Running. A transição de Waiting para Running (após a inicialização bem-sucedida) é um indicador chave do "start" do contêiner principal.
+ * kube_pod_container_status_terminated_reason: Esta métrica (tipo gauge) mostra a razão pela qual um contêiner foi terminado (por exemplo, Completed para sucesso, Error para falha). Para init containers, você espera ver a razão Completed.
+Queries de Exemplo (PromQL) para Monitorar a Inicialização e o Início:
+Para identificar pods em um namespace onde os contêineres estão em estado Waiting e ver a razão:
+kube_pod_container_status_waiting_reason{namespace="<namespace>", pod=~"<seus_pods_regex>"}
+
+(Um valor 1 para esta métrica indica que o contêiner está esperando pela razão especificada no rótulo reason).
+Para verificar se os init containers de um pod foram concluídos:
+kube_pod_container_status_terminated_reason{namespace="<namespace>", pod=~"<seus_pods_regex>", container=~".*-init-container", reason="Completed"}
+
+(Procure por um valor 1, indicando que o init container com o nome correspondente ao regex e razão "Completed" existe). Note que o nome do init container dependerá da sua definição no YAML do pod. Você pode precisar ajustar o regex do container.
+Para monitorar a transição de contêineres de aplicação para o estado Running após a inicialização:
+Compare a métrica kube_pod_container_status_running com o número esperado de contêineres em execução por pod após a fase de inicialização. Você pode observar a série temporal dessa métrica para ver quando os contêineres atingem o estado Running.
+kube_pod_container_status_running{namespace="<namespace>", pod=~"<seus_pods_regex>", container!="<init_container_regex>"}
+
+(Substitua <init_container_regex> por um regex que exclua os nomes dos seus init containers, focando nos contêineres de aplicação).
+Health Check Pré e Pós-Atualização Considerando o "Wait Started"
+Ao realizar o health check pré e pós-atualização, adicione a análise das métricas relacionadas à inicialização e ao início dos contêineres:
+Pré-Atualização:
+ * Além de verificar as fases (Running) e o status das probes (ready, running), verifique se não há contêineres da versão atual em estado Waiting com razões inesperadas (ImagePullBackOff, CrashLoopBackOff, etc.) que possam indicar problemas subjacentes antes mesmo da atualização.
+ * Confirme se os pods existentes tiveram seus init containers concluídos com sucesso.
+Pós-Atualização:
+ * Após a implantação dos novos pods, monitore a fase Pending. O tempo que os novos pods passam em Pending pode indicar problemas com o agendamento, download de imagens ou execução dos init containers.
+ * Utilize kube_pod_container_status_waiting_reason para entender por que os novos contêineres podem estar em estado Waiting. ContainerCreating é normal no início, mas ImagePullBackOff ou CrashLoopBackOff indicam falhas na nova versão.
+ * Monitore a transição dos contêineres de aplicação para o estado Running utilizando kube_pod_container_status_running. Um atraso significativo ou falha em atingir este estado pode indicar problemas com a lógica de inicialização da sua aplicação ou dependências.
+ * Verifique o status de conclusão dos init containers nos novos pods para garantir que a etapa de inicialização está ocorrendo conforme o esperado.
+Sumário
+Incorporar a análise das métricas de estado dos contêineres, especialmente o tempo gasto em estados como Waiting e a conclusão dos init containers, fornece uma visão mais granular do processo de inicialização do pod. Isso ajuda a identificar gargalos ou falhas que ocorrem antes mesmo que as probes de liveness ou readiness entrem em ação ou que o pod atinja a fase Running de forma estável.
+Ao combinar o monitoramento das fases do pod, o status das probes e o estado detalhado dos contêineres (incluindo o "wait started" implícito na transição de estados e na conclusão dos init containers), você obtém um panorama completo da saúde dos seus pods no OpenShift ARO pré e pós-atualização, permitindo uma validação mais eficaz da implantação.
