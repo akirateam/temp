@@ -1,0 +1,74 @@
+Realizar um health check detalhado dos pods em um cluster OpenShift ARO (Azure Red Hat OpenShift) utilizando as métricas nativas do Prometheus antes e depois de uma atualização é crucial para garantir a saúde e a estabilidade da aplicação. Este processo envolve a verificação dos diferentes estados (phases) em que um pod pode se encontrar, além da análise do status das probes de liveness e readiness.
+O OpenShift ARO inclui uma instância do Prometheus pré-configurada que coleta métricas do próprio cluster e das aplicações. É através desta interface que realizaremos as verificações.
+Acessando as Métricas do Prometheus no OpenShift ARO
+O acesso mais comum ao Prometheus nativo no OpenShift ARO é feito através do console web do OpenShift:
+ * Faça login no console web do OpenShift.
+ * No menu de navegação esquerdo, selecione "Observe" (Observar).
+ * Clique em "Metrics" (Métricas).
+Esta interface permite executar queries utilizando a linguagem de query do Prometheus (PromQL) sobre as métricas coletadas no cluster.
+Métricas Relevantes para Health Check de Pods
+As métricas relacionadas ao estado dos pods e ao status das probes são geralmente exportadas pelo kube-state-metrics, um serviço que escuta a API do Kubernetes e gera métricas sobre o estado dos objetos.
+Métricas de Fases do Pod
+Os pods no Kubernetes (e OpenShift) podem estar em uma das seguintes fases:
+ * Pending: O pod foi aceito pelo cluster, mas um ou mais dos contêineres de imagem ainda não foram criados. Isso pode ocorrer por diversos motivos, como falta de recursos ou pendências de agendamento.
+ * Running: O pod foi ligado a um nó, e todos os contêineres foram criados. Pelo menos um contêiner está em execução, sendo inicializado ou sendo reiniciado.
+ * Succeeded: Todos os contêineres no pod terminaram com sucesso e não serão reiniciados.
+ * Failed: Todos os contêineres no pod terminaram, e pelo menos um contêiner terminou em falha (código de saída diferente de zero).
+ * Unknown: O estado do pod não pôde ser determinado pelo estado do Kubelet no nó.
+A métrica kube_pod_status_phase do kube-state-metrics é utilizada para monitorar essas fases. Ela é uma gauge com rótulos para o nome do pod, namespace e a fase. O valor da métrica será 1 se o pod estiver na fase indicada pelo rótulo phase, e 0 caso contrário.
+Query de Exemplo (PromQL) para verificar pods em diferentes fases:
+Para ver o número de pods em cada fase em um determinado namespace (substitua <namespace> pelo seu namespace):
+sum by (phase) (kube_pod_status_phase{namespace="<namespace>"})
+
+Para verificar se há pods em estado Pending ou Failed após uma atualização em um namespace específico:
+sum by (pod, phase) (kube_pod_status_phase{namespace="<namespace>", phase=~"Pending|Failed"})
+
+Métricas de Status das Probes (livenessProbe e readinessProbe)
+As probes de liveness e readiness são essenciais para que o Kubernetes saiba o estado de saúde da sua aplicação dentro do contêiner.
+ * livenessProbe: Indica se o contêiner está em execução. Se falhar, o Kubelet reinicia o contêiner.
+ * readinessProbe: Indica se o contêiner está pronto para aceitar tráfego. Se falhar, os endpoints do pod são removidos dos Services, redirecionando o tráfego para outros pods saudáveis.
+As métricas relacionadas ao status das probes também vêm do kube-state-metrics. As métricas relevantes são tipicamente kube_pod_container_status_ready e kube_pod_container_status_running, embora o sucesso/falha explícito das probes possa ser inferido ou, em versões mais recentes ou com configuração específica, haver métricas mais diretas como kube_pod_container_status_last_terminated_reason ou eventos expostos como métricas.
+A métrica kube_pod_container_status_ready é uma gauge que indica se um contêiner específico em um pod está pronto para servir requisições (status da readinessProbe). O valor é 1 se pronto, 0 caso contrário.
+A métrica kube_pod_container_status_running é uma gauge que indica se um contêiner específico em um pod está em execução. O valor é 1 se em execução, 0 caso contrário.
+Query de Exemplo (PromQL) para verificar o status das probes:
+Para ver quantos contêineres estão prontos (ready) em um namespace:
+sum by (pod, container) (kube_pod_container_status_ready{namespace="<namespace>"})
+
+Para identificar pods em um namespace onde nem todos os contêineres estão prontos:
+sum by (pod, namespace) (kube_pod_container_status_ready{namespace="<namespace>"}) unless sum by (pod, namespace) (kube_pod_container_status_ready{namespace="<namespace>"}) == count by (pod, namespace) (kube_pod_container_status_ready{namespace="<namespace>"})
+
+(Nota: Esta última query é um pouco mais avançada para identificar pods com problemas de readiness.)
+Para verificar contêineres que não estão em estado de execução (pode indicar problemas com a liveness probe ou outras falhas):
+sum by (pod, container) (kube_pod_container_status_running{namespace="<namespace>"}) == 0
+
+Realizando o Health Check Pré e Pós-Atualização
+O processo de health check utilizando métricas do Prometheus deve ser realizado em duas etapas:
+1. Health Check Pré-Atualização:
+Antes de iniciar a atualização da sua aplicação, acesse o console web do OpenShift, vá para a seção de Métricas e execute as queries relevantes para os seus pods no namespace da aplicação.
+ * Verifique se todos (ou a quantidade esperada) dos seus pods estão na fase Running. Idealmente, não deve haver pods significativos nas fases Pending, Failed ou Unknown.
+   sum by (phase) (kube_pod_status_phase{namespace="<namespace>", pod=~"<seus_pods_regex>"})
+
+   (Substitua <seus_pods_regex> por uma expressão regular que selecione os pods da sua aplicação).
+ * Verifique se todos os contêineres nos seus pods estão ready (prontos para receber tráfego).
+   sum by (pod, container) (kube_pod_container_status_ready{namespace="<namespace>", pod=~"<seus_pods_regex>"})
+
+ * Verifique se todos os contêineres estão running.
+   sum by (pod, container) (kube_pod_container_status_running{namespace="<namespace>", pod=~"<seus_pods_regex>"})
+
+Documente os resultados. Se houver problemas de saúde antes da atualização (pods em estados indesejados ou probes falhando), investigue e resolva-os antes de prosseguir com a atualização para evitar a introdução de novos problemas ou a mascarar falhas existentes.
+2. Health Check Pós-Atualização:
+Após a conclusão da atualização da sua aplicação (Deployment, DeploymentConfig, StatefulSet, etc.), aguarde o tempo necessário para que os novos pods sejam implantados e inicializados completamente. Em seguida, repita as mesmas queries do passo pré-atualização.
+ * Verifique se os novos pods da sua aplicação alcançaram a fase Running e se a quantidade de pods esperada está em execução. Monitore a transição das fases Pending para Running.
+ * Verifique se os contêineres nos novos pods estão ready e running.
+ * Compare os resultados com os do health check pré-atualização. A expectativa é que, após uma atualização bem-sucedida, todos os pods da nova versão estejam na fase Running e com suas probes de liveness e readiness passando consistentemente.
+ * Observe se há um aumento no número de pods em fase Failed ou Unknown, ou falhas persistentes nas probes, o que indicaria problemas com a nova versão da aplicação.
+   sum by (pod, phase) (kube_pod_status_phase{namespace="<namespace>", phase=~"Failed|Unknown"})
+
+   sum by (pod, container) (kube_pod_container_status_ready{namespace="<namespace>", pod=~"<seus_pods_regex>"}) == 0
+
+Considerações Adicionais
+ * Histórico das Métricas: O Prometheus armazena um histórico das métricas. Isso permite analisar o comportamento dos pods durante o processo de atualização, observando as transições de fase e o status das probes ao longo do tempo. Utilize a funcionalidade de gráfico no console de métricas para visualizar essas tendências.
+ * Alertas: Para um monitoramento contínuo e proativo, configure alertas no OpenShift (baseado nas métricas do Prometheus) para notificá-lo automaticamente sobre pods em estados falhos, probes que não respondem, ou um número inesperado de pods em determinadas fases.
+ * Métricas da Aplicação: Além das métricas de infraestrutura do Kubernetes (kube-state-metrics), certifique-se de que sua aplicação exponha métricas customizadas (se aplicável) que também podem ser coletadas pelo Prometheus e usadas para verificar a saúde a nível de negócio ou funcionalidade.
+ * Eventos: Embora as métricas do Prometheus forneçam um estado atual e histórico, os eventos do Kubernetes (oc get events) fornecem informações detalhadas sobre o que aconteceu com um pod (criação, agendamento, início do contêiner, falhas de probe, etc.). Combinar a análise de métricas e eventos oferece uma visão mais completa.
+Ao incorporar a análise dessas métricas do Prometheus no seu pipeline de atualização e no monitoramento contínuo, você terá uma visibilidade robusta sobre a saúde dos seus pods no OpenShift ARO, permitindo identificar e reagir rapidamente a quaisquer problemas que possam surgir pré ou pós-atualização.
