@@ -1,0 +1,301 @@
+Entendido. Integrar a automação via código para realizar checks pré e pós-upgrade, monitorar o processo e incluir tentativas de self-healing, além de abordar a pausa de workers e a matriz de compatibilidade, é o próximo passo lógico.
+É importante ressaltar que fornecer um código Ansible completo e "pronto para produção" que se adapte a qualquer ambiente OpenShift e qualquer conjunto de microserviços é inviável. Cada cluster tem suas especificidades, métodos de autenticação, configurações de rede, e as aplicações de negócio têm seus próprios health checks e comportamentos durante atualizações.
+No entanto, posso fornecer exemplos ilustrativos de tarefas Ansible que demonstram como você pode implementar a lógica discutida. Estes exemplos utilizam o módulo kubernetes.core.k8s (recomendado para interagir com a API Kubernetes/OpenShift) e, potencialmente, o módulo ansible.builtin.uri para consultar o Prometheus.
+Pré-requisitos:
+ * Ansible instalado.
+ * Coleção kubernetes.core instalada (ansible-galaxy collection install kubernetes.core).
+ * Acesso ao cluster OpenShift a partir do host que executa o Ansible (via ~/.kube/config, variáveis de ambiente, ou credenciais passadas para os módulos Ansible).
+ * Para consultar Prometheus diretamente via API, você precisará de um token de serviço com permissões de leitura no namespace de monitoramento e acesso à rede ao serviço Prometheus.
+Estrutura Ilustrativa de um Playbook Ansible para Upgrade Seguro:
+---
+- name: OpenShift Cluster Safe Upgrade Automation
+  hosts: localhost # Execute a partir de um nó de controle ou máquina com acesso ao cluster
+  connection: local # Ou use 'kubectl' se estiver executando em um nó com o cliente oc configurado
+  gather_facts: no
+
+  vars:
+    target_ocp_version: "4.14.10" # Versão de destino do OpenShift
+    prometheus_url: "https://prometheus-k8s.openshift-monitoring.svc:9090" # URL do serviço Prometheus
+    prometheus_api_token: "{{ lookup('env', 'PROMETHEUS_API_TOKEN') }}" # Obtenha o token de forma segura
+
+  tasks:
+    # --- Fase 1: Checks Pré-Upgrade ---
+    - name: --- Starting Pre-Upgrade Checks ---
+      debug:
+        msg: "Executing pre-upgrade checks for version {{ target_ocp_version }}"
+
+    - include_tasks: tasks/pre_checks.yml # Inclui um arquivo separado para tasks de pré-check
+
+    # --- Fase 2: Iniciar o Upgrade (Com Pausa Condicional para Workers, se aplicável - veja explicação abaixo) ---
+    - name: --- Initiating OpenShift Upgrade ---
+      debug:
+        msg: "Attempting to set desired OpenShift version to {{ target_ocp_version }}"
+
+    # NOTA: Pausar Workers de forma granular durante o upgrade via um simples parâmetro não é padrão.
+    # A pausa geralmente envolve interagir com MachineConfigPools ou cordoning/draining nós manualmente/via script.
+    # Abordaremos a lógica para a pausa de workers e maxUnavailable 5 separadamente na explicação.
+
+    # Exemplo BÁSICO para iniciar o upgrade definindo a versão desejada (requer permissão no recurso ClusterVersion)
+    # Em ambientes produtivos, usar o OCM ou métodos suportados é mais comum.
+    - name: Set desired cluster version
+      k8s:
+        api_version: config.openshift.io/v1
+        kind: ClusterVersion
+        name: version
+        patch:
+          - op: replace
+            path: /spec/desired/version
+            value: "{{ target_ocp_version }}"
+        state: patched
+      register: upgrade_initiation_status
+      ignore_errors: yes # Permite que o playbook continue para monitorar, mesmo se a iniciação falhar
+
+    # --- Fase 3: Monitorar o Processo de Upgrade ---
+    - name: --- Monitoring Upgrade Progress ---
+      debug:
+        msg: "Monitoring cluster upgrade until version {{ target_ocp_version }} is reached or failure occurs."
+
+    - include_tasks: tasks/monitor_upgrade.yml # Inclui tasks para monitorar o status do ClusterVersion
+
+    # --- Fase 4: Validação Pós-Upgrade ---
+    - name: --- Starting Post-Upgrade Validation ---
+      debug:
+        msg: "Executing post-upgrade validation checks."
+
+    - include_tasks: tasks/post_checks.yml # Inclui tasks para validação pós-upgrade (podem reusar lógica de pre_checks)
+
+    # --- Fase 5: Self-Healing (Opcional e Cauteloso) ---
+    - name: --- Attempting Self-Healing Steps (if validation failed) ---
+      debug:
+        msg: "Attempting automated remediation steps."
+      when: post_upgrade_validation_failed | default(false) # Execute apenas se a validação pós-upgrade falhou
+
+    - include_tasks: tasks/self_healing.yml # Inclui tasks para tentativas de auto-remediação
+
+    # --- Fase 6: Relatório Final ---
+    - name: --- Upgrade Process Finished ---
+      debug:
+        msg: "OpenShift upgrade process automation completed. Review logs for success/failure."
+      # Adicionar lógica aqui para enviar relatórios ou acionar alertas externos
+
+tasks/pre_checks.yml (Exemplos de Tasks):
+# tasks/pre_checks.yml
+- name: Get ClusterVersion info for compatibility check
+  k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterVersion
+    name: version
+  register: cluster_version_info
+
+- name: Check if current version is known and supported for upgrade path (Requires custom logic)
+  # Esta task é ILUSTRATIVA. A lógica real de validação da matriz de compatibilidade
+  # depende de como você armazena ou consulta a matriz.
+  # Pode envolver lookup em um arquivo YAML/JSON com caminhos suportados.
+  fail:
+    msg: "Upgrade path from {{ cluster_version_info.resources[0].status.observedBy[0].version }} to {{ target_ocp_version }} is not defined in supported paths list."
+  when: >
+    # Exemplo: Verificar se a combinação current_version -> target_version existe em uma lista de fatos/vars
+    (cluster_version_info.resources[0].status.observedBy[0].version + "->" + target_ocp_version) not in supported_upgrade_paths | default([])
+
+- name: Check for Degraded ClusterOperators using K8s API
+  k8s_info:
+    kind: ClusterOperator
+  register: cluster_operators_pre
+
+- name: Fail if any ClusterOperator is Degraded before upgrade
+  fail:
+    msg: "Pre-upgrade check failed: ClusterOperator {{ item.metadata.name }} is Degraded: {{ item.status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | map(attribute='message') | list | join(', ') }}"
+  when:
+    - cluster_operators_pre.resources is defined
+    - item.status.conditions is defined
+    - item.status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | list | length > 0
+  loop: "{{ cluster_operators_pre.resources }}"
+
+- name: Check for Nodes that are not Ready
+  k8s_info:
+    kind: Node
+  register: nodes_pre
+
+- name: Fail if any Node is not Ready before upgrade
+  fail:
+    msg: "Pre-upgrade check failed: Node {{ item.metadata.name }} is not Ready. Conditions: {{ item.status.conditions | selectattr('type', 'equalto', 'Ready') | list }}"
+  when:
+    - nodes_pre.resources is defined
+    - item.status.conditions is defined
+    - item.status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'False') | list | length > 0
+  loop: "{{ nodes_pre.resources }}"
+
+- name: Check for firing Error Alerts using Prometheus API
+  ansible.builtin.uri:
+    url: "{{ prometheus_url }}/api/v1/query"
+    validate_certs: no
+    headers:
+      Authorization: "Bearer {{ prometheus_api_token }}"
+    args:
+      query: 'ALERTS{severity="error", alertstate="firing"}'
+  register: error_alerts_pre_query
+
+- name: Fail if there are active Error Alerts
+  fail:
+    msg: "Pre-upgrade check failed: Found firing error alerts: {{ error_alerts_pre_query.json.data.result | json_encode() }}"
+  when:
+    - error_alerts_pre_query.json.data.result | length > 0
+
+# Exemplo de checagem de OperatorHub Subscription status (simples)
+- name: Check OperatorHub Subscription health (basic)
+  k8s_info:
+    kind: Subscription
+    namespace: "" # Checa em todos os namespaces
+  register: subscriptions_pre
+
+- name: Report any failed or unhealthy subscriptions (Requires detailed analysis of subscription.status)
+  # Esta task apenas mostra os dados. A lógica para determinar "unhealthy" de uma Subscription
+  # pode ser complexa, verificando status.state, status.installplanref, etc.
+  debug:
+    msg: "OperatorHub Subscriptions Info: {{ subscriptions_pre.resources | json_encode() }}"
+
+tasks/monitor_upgrade.yml (Exemplo de Tasks):
+# tasks/monitor_upgrade.yml
+- name: Wait for ClusterVersion to report desired version or become Degraded
+  k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterVersion
+    name: version
+  register: current_cluster_version_status
+  until:
+    - current_cluster_version_status.resources is defined
+    - current_cluster_version_status.resources | length > 0
+    # Espera até que a versão observada seja a desejada OU a condição Degraded seja True
+    - current_cluster_version_status.resources[0].status.observedBy is defined
+    - current_cluster_version_status.resources[0].status.observedBy | length > 0
+    - current_cluster_version_status.resources[0].status.observedBy[0].version == target_ocp_version
+    - (current_cluster_version_status.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | list | length == 0)
+  retries: 120 # Tenta por 120 vezes
+  delay: 30 # Espera 30 segundos entre tentativas (Total: 1 hora)
+
+- name: Fail if ClusterVersion ended up in Degraded state
+  fail:
+    msg: "OpenShift upgrade failed: ClusterVersion is in Degraded state: {{ current_cluster_version_status.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | map(attribute='message') | list | join(', ') }}"
+  when:
+    - current_cluster_version_status.resources is defined
+    - current_cluster_version_status.resources | length > 0
+    - current_cluster_version_status.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | list | length > 0
+
+tasks/post_checks.yml (Exemplo de Tasks):
+# tasks/post_checks.yml
+# Reutilize ou adapte tasks de pre_checks.yml aqui.
+# Ex:
+- name: Check for Degraded ClusterOperators after upgrade
+  k8s_info:
+    kind: ClusterOperator
+  register: cluster_operators_post
+
+- name: Report if any ClusterOperator is Degraded after upgrade (Consider this a failure for self-healing trigger)
+  set_fact:
+    post_upgrade_validation_failed: true
+  when:
+    - cluster_operators_post.resources is defined
+    - item.status.conditions is defined
+    - item.status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | list | length > 0
+  loop: "{{ cluster_operators_post.resources }}"
+
+# Exemplo de checagem de status de rollouts de Deployments de microserviços
+- name: Check Microservice Deployment rollouts
+  k8s_info:
+    kind: Deployment
+    namespace: my-app # Namespace dos seus microserviços
+  register: microservice_deployments
+
+- name: Report if any microservice deployment is not fully rolled out
+  set_fact:
+    post_upgrade_validation_failed: true
+  when:
+    - microservice_deployments.resources is defined
+    - item.status is defined
+    - item.status.replicas | default(0) != item.status.readyReplicas | default(0) or item.status.replicas | default(0) != item.status.updatedReplicas | default(0)
+  loop: "{{ microservice_deployments.resources }}"
+
+# Adicione mais checks pós-upgrade conforme necessário (Nós, Alertas, etc.)
+
+tasks/self_healing.yml (Exemplo de Tasks Cautelosas):
+# tasks/self_healing.yml
+# Esta seção deve ser usada com extrema cautela e focada em problemas conhecidos e de baixo risco.
+
+- name: Attempt to restart deployments that failed to roll out fully
+  command: "oc rollout restart deployment/{{ item.metadata.name }} -n {{ item.metadata.namespace }}"
+  when:
+    - item.status.replicas | default(0) != item.status.readyReplicas | default(0)
+  loop: "{{ microservice_deployments.resources }}" # Reutiliza o registro da checagem pós-upgrade
+
+- name: Attempt to delete and recreate specific problematic pods (USE WITH CAUTION)
+  k8s:
+    state: absent
+    kind: Pod
+    namespace: problematic-namespace
+    name: problematic-pod-name # Substitua pelo nome/pattern do pod
+  # Adicionar condições when: para identificar pods específicos que podem ser reiniciados com segurança
+  # Ex: when: pod_status.phase == "CrashLoopBackOff"
+
+# Adicione outras tentativas de self-healing APENAS para problemas bem compreendidos e de baixo risco.
+
+Sobre a Pausa de Workers (Channel EUS, maxUnavailable 5)
+ * Channel EUS: Refere-se ao canal de atualização que você configurou no ClusterVersion para receber versões EUS (Extended Update Support). Ele determina quais versões estão disponíveis para o upgrade, mas não controla o processo de execução do upgrade em si. Para usar um canal EUS, você configuraria:
+     spec:
+    channel: "eus-4.12" # Exemplo de canal EUS
+    desiredUpdate:
+      version: "4.12.x" # Uma versão específica dentro do canal
+
+ * maxUnavailable 5 para Workers:
+   * O conceito de maxUnavailable é usado nativamente pelo OpenShift para gerenciar o rollout de atualizações para conjuntos de pods (Deployments, DaemonSets) ou MachineConfigPools (que gerenciam a atualização dos nós).
+   * Para a atualização de nós workers durante um upgrade do OpenShift, quem orquestra isso são os MachineConfigPools (MCPs). Cada pool (como master ou worker) tem parâmetros de atualização.
+   * Existe um parâmetro maxUnavailable no spec de um MachineConfigPool. No entanto, ele representa uma porcentagem ou um número fixo de nós que podem estar indisponíveis dentro daquele pool durante uma atualização gerenciada pelo Machine Config Operator. Ele não é um parâmetro no recurso ClusterVersion para pausar o upgrade globalmente após um certo número de workers serem atualizados.
+   * Para pausar a atualização dos workers em um ponto específico durante o upgrade do cluster, você geralmente precisaria pausar o MachineConfigPool dos workers (oc adm drain/uncordon em nós específicos ou, mais comum, patching do recurso MachineConfigPool para spec.paused: true). Isso pausaria a aplicação de novas MachineConfigs (incluindo a nova versão do OS nos nós) naquele pool.
+Como abordar a pausa e maxUnavailable em automação:
+ * Monitorar maxUnavailable (nos MCPs, se aplicável): Você pode incluir uma task Ansible para verificar a configuração maxUnavailable em seus MachineConfigPools para entender como as atualizações de nós são gerenciadas.
+   - name: Get MachineConfigPools info
+  k8s_info:
+    api_version: machineconfiguration.openshift.io/v1
+    kind: MachineConfigPool
+  register: mcp_info
+
+- name: Report maxUnavailable for worker pool
+  debug:
+    msg: "Worker MachineConfigPool maxUnavailable: {{ item.spec.maxUnavailable | default('Not set - default behavior') }}"
+  when: item.metadata.name == "worker"
+  loop: "{{ mcp_info.resources | default([]) }}"
+
+ * Implementar Pausa/Continuação da Atualização de Workers (Ação de Self-Healing ou Controle Manual via Automação): Se você precisar pausar ou continuar a atualização de workers via automação (por exemplo, após uma fase específica do upgrade ou se um problema for detectado apenas nos workers), você interagiria com o MachineConfigPool do worker.
+   # Exemplo: Pausar a atualização do pool 'worker'
+- name: Pause Worker MachineConfigPool updates
+  k8s:
+    api_version: machineconfiguration.openshift.io/v1
+    kind: MachineConfigPool
+    name: worker
+    patch:
+      - op: replace
+        path: /spec/paused
+        value: true
+    state: patched
+
+# Exemplo: Continuar a atualização do pool 'worker'
+- name: Unpause Worker MachineConfigPool updates
+  k8s:
+    api_version: machineconfiguration.openshift.io/v1
+    kind: MachineConfigPool
+    name: worker
+    patch:
+      - op: replace
+        path: /spec/paused
+        value: false
+    state: patched
+
+   * Você integraria essas tasks no seu playbook, por exemplo, após monitorar que um certo número de workers foi atualizado (o que exigiria uma lógica de contagem de nós por versão ou status) e antes de prosseguir para a próxima fase. A contagem de 5 workers indisponíveis seria algo que sua lógica de monitoramento observaria (count by (state) (kube_node_status_condition{condition="Ready", status="false", node=~"worker-.*"})) para decidir pausar o MCP.
+Conclusão sobre o Código:
+Os exemplos fornecidos são blocos de construção. A criação de um playbook completo para um upgrade seguro e automatizado requer:
+ * Conectar esses blocos em uma sequência lógica (o fluxo pré-check -> initiate -> monitor -> post-check -> self-healing).
+ * Implementar o tratamento de erros adequado para cada tarefa.
+ * Gerenciar credenciais de forma segura (para acesso ao cluster e Prometheus).
+ * Adaptar as verificações (queries PromQL, checks k8s_info) e as tentativas de self-healing à sua arquitetura específica de cluster e microserviços.
+ * Definir os limiares aceitáveis para métricas e estados.
+ * Testar exaustivamente o playbook em ambientes de não produção.
+A lógica para pausar/continuar workers com base em um contador específico de nós (maxUnavailable) teria que ser implementada como lógica condicional (usando when) no seu playbook Ansible, monitorando o estado dos nós ou MCPs e executando as tasks de patch do MCP conforme necessário.
