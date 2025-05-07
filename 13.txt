@@ -111,3 +111,21 @@ Pós-Atualização:
 Sumário
 Incorporar a análise das métricas de estado dos contêineres, especialmente o tempo gasto em estados como Waiting e a conclusão dos init containers, fornece uma visão mais granular do processo de inicialização do pod. Isso ajuda a identificar gargalos ou falhas que ocorrem antes mesmo que as probes de liveness ou readiness entrem em ação ou que o pod atinja a fase Running de forma estável.
 Ao combinar o monitoramento das fases do pod, o status das probes e o estado detalhado dos contêineres (incluindo o "wait started" implícito na transição de estados e na conclusão dos init containers), você obtém um panorama completo da saúde dos seus pods no OpenShift ARO pré e pós-atualização, permitindo uma validação mais eficaz da implantação.
+---
+Sim, existem outras possíveis razões (reasons) para um contêiner estar no estado Waiting, além de ContainerCreating, ImagePullBackOff e CrashLoopBackOff. O conjunto exato de razões pode depender da versão do Kubernetes/OpenShift e do ambiente específico do cluster.
+As razões mais comuns e frequentemente observadas, que geralmente indicam um contêiner que não conseguiu iniciar, são:
+ * ContainerCreating: O Kubernetes está atualmente no processo de criação do contêiner. Isso é um estado inicial normal, mas se persistir por muito tempo, pode indicar problemas com o provisionamento de recursos, lentidão do Docker daemon (ou runtime equivalente), ou problemas com a configuração do contêiner.
+ * ImagePullBackOff: O Kubernetes não conseguiu puxar a imagem do contêiner a partir do registry após várias tentativas com falha. Isso pode ser devido a um nome de imagem incorreto, tag inexistente, problemas de autenticação com o registry, ou problemas de rede.
+ * CrashLoopBackOff: O contêiner foi iniciado, mas terminou (caiu) e o Kubernetes está tentando reiniciá-lo repetidamente. Isso geralmente indica um erro na aplicação dentro do contêiner que a impede de rodar corretamente. É crucial verificar os logs do contêiner para entender a causa da falha.
+ * ErrImagePull: Falha ao puxar a imagem do contêiner. Semelhante a ImagePullBackOff, mas pode ocorrer após a primeira tentativa.
+ * CreateContainerConfigError: O Kubelet não conseguiu configurar o contêiner devido a um erro, muitas vezes relacionado a ConfigMaps ou Secrets referenciados que não existem ou não estão acessíveis.
+ * CreateContainerError: O Kubelet falhou ao criar o contêiner. Isso pode ser causado por diversos problemas, incluindo configuração de segurança (SELinux, AppArmor), problemas de volume, ou erros internos do runtime do contêiner.
+ * InvalidImageName: O nome da imagem especificada para o contêiner é inválido.
+ * SandboxCreationError: O Kubelet falhou ao criar o sandbox para o pod (geralmente o contêiner de infraestrutura).
+Como descobrir as razões "waiting" presentes no seu cluster via Prometheus:
+Você pode usar o console de métricas do OpenShift para listar todos os valores únicos do rótulo reason para a métrica kube_pod_container_status_waiting_reason que foram observados pelo Prometheus.
+Execute a seguinte query PromQL:
+label_values(kube_pod_container_status_waiting_reason, reason)
+
+Esta query retornará uma lista de todos os valores que o rótulo reason assumiu para a métrica kube_pod_container_status_waiting_reason em todo o seu cluster ao longo do tempo que o Prometheus reteve os dados. Isso lhe dará a lista exata de razões de espera que ocorreram no seu ambiente específico.
+Ao monitorar a métrica kube_pod_container_status_waiting_reason e suas diferentes razões pré e pós-atualização, você pode identificar rapidamente se os pods estão encontrando dificuldades para iniciar e qual a natureza do problema, permitindo uma depuração mais eficaz.
