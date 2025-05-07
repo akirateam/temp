@@ -1,0 +1,11 @@
+Subject: Inquiry regarding "Update risks" feature during ARO Cluster Upgrade in Red Hat ACM
+Dear Red Hat Support Team,
+I am writing to request more detailed information about the "Update risks" feature displayed within the Red Hat Advanced Cluster Management (ACM) console when preparing to upgrade Azure Red Hat OpenShift (ARO) clusters.
+In the upgrade interface for managed clusters, there is a column labeled "Update risks" which indicates whether potential issues have been found prior to initiating an upgrade. While I understand its general purpose is to highlight potential blockers, I would like to gain a deeper understanding of its functionality.
+Specifically, could you please provide details on the following:
+ * What specific checks and validations does the "Update risks" feature perform on a cluster to determine if there are potential risks for an upgrade?
+ * If risks are detected (i.e., when it does not show "No risks found"), what kind of information is typically presented to the user? Does it provide details about the specific risks found?
+ * Does the feature offer guidance or steps for how to remediate the identified risks?
+ * Does the "Update risks" feature perform any automatic corrections or is it purely a diagnostic and reporting tool?
+Understanding the scope and output of this feature will greatly assist us in preparing our ARO clusters for upgrades and utilizing Red Hat ACM more effectively to ensure smooth and successful upgrade processes.
+Thank you for your time and assistance.
