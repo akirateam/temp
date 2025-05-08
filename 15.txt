@@ -1,0 +1,281 @@
+Com certeza! As funcionalidades de análise de riscos, como o Red Hat Insights e especificamente a feature Upgrade Risks / Update Risks (que aparece tanto na console do OpenShift quanto no ACM para clusters gerenciados), são ferramentas essenciais para a preparação de upgrades e complementam muito bem as verificações baseadas em métricas que discutimos.
+Essas ferramentas fornecem uma análise mais profunda, utilizando inteligência da Red Hat baseada em dados de suporte e observações de falhas em milhares de clusters para identificar problemas que podem não ser óbvios apenas olhando para métricas básicas.
+Vamos adicionar a verificação do Insights/Upgrade Risks de forma mais proeminente no fluxo de automação e no checklist:
+Importância do Red Hat Insights e Upgrade Risks:
+ * O Insights analisa o estado do seu cluster e o compara com problemas conhecidos que causaram falhas em upgrades em outros ambientes.
+ * Ele identifica riscos específicos baseados em configurações, versões de software, e até mesmo padrões de utilização que podem não ser diretamente visíveis em métricas simples de saúde.
+ * A feature Upgrade Risks/Update Risks no ACM e na console do OpenShift centraliza essa informação, tornando-a acessível para os clusters gerenciados.
+Como Integrar a Verificação do Insights/Upgrade Risks na Automação (AAP):
+A forma mais robusta de integrar a verificação do Insights na automação é consultar o resultado da análise do Insights para o cluster específico antes de iniciar o upgrade. Idealmente, isso seria feito através das APIs do Red Hat Cloud Services.
+ * Realizar a Análise no Insights: Certifique-se de que o cluster está conectado ao Red Hat Cloud Services e que a análise do Insights (incluindo Upgrade Risks) está sendo executada.
+ * Consultar o Resultado via API: No seu playbook Ansible (executado no AAP), adicione uma tarefa que consulta a API relevante do Red Hat Cloud Services para obter o relatório de Upgrade Risks para o target_cluster_name.
+ * Avaliar os Riscos: A tarefa Ansible deve analisar a resposta da API. Se riscos de alta severidade (ou qualquer risco, dependendo da sua política) forem reportados pelo Insights para aquele cluster, a tarefa deve falhar.
+Exemplo Ilustrativo de Tarefa Ansible (Consultando uma API Fictícia do Insights):
+Este é um exemplo conceitual, pois o endpoint exato da API do Insights para obter o relatório de Upgrade Risks para um cluster específico e o método de autenticação podem variar e precisam ser confirmados na documentação das APIs do Red Hat Cloud Services.
+# Exemplo de tarefa para ser incluída em tasks/pre_checks.yml
+
+- name: Query Red Hat Insights API for Upgrade Risks on {{ target_cluster_name }}
+  ansible.builtin.uri:
+    # Substitua por URL REAL da API do Red Hat Cloud Services para Upgrade Risks
+    url: "https://api.cloud.redhat.com/api/insights/v1/upgrade-risks/clusters/{{ target_cluster_uuid }}/report" # target_cluster_uuid é necessário
+    method: GET
+    # Método de autenticação - pode ser um token OAuth, chave de API, etc.
+    # Exemplo usando token:
+    headers:
+      Authorization: "Bearer {{ rh_cloud_api_token }}" # Token obtido de forma segura
+    status_code: 200, 204 # 200 se há riscos, 204 se não há riscos (depende da API)
+  register: insights_upgrade_risks_report
+  delegate_to: localhost # Execute a partir de um host com acesso à internet e à API
+
+- name: Check Insights Upgrade Risks Report
+  fail:
+    msg: "Red Hat Insights reported high-severity upgrade risks for {{ target_cluster_name }}. Review the report in the Insights console."
+  when:
+    # Analisar a resposta da API. A estrutura JSON depende da API real.
+    # Exemplo: Se a API retorna uma lista de riscos e queremos falhar se qualquer um tiver severity 'high'
+    - insights_upgrade_risks_report.json is defined
+    - insights_upgrade_risks_report.json.risks is defined # Substitua pelo caminho real para a lista de riscos
+    - insights_upgrade_risks_report.json.risks | selectattr('severity', 'equalto', 'high') | list | length > 0
+
+- name: Report if Insights found risks (but not high severity)
+  debug:
+    msg: "Red Hat Insights reported upgrade risks for {{ target_cluster_name }}, but none are high severity. Review the report."
+  when:
+    - insights_upgrade_risks_report.json is defined
+    - insights_upgrade_risks_report.json.risks is defined
+    - insights_upgrade_risks_report.json.risks | length > 0
+    - insights_upgrade_risks_report.json.risks | selectattr('severity', 'equalto', 'high') | list | length == 0
+
+- name: Confirm Insights found no upgrade risks
+  debug:
+    msg: "Red Hat Insights reported no upgrade risks for {{ target_cluster_name }}."
+  when:
+    # Depende da API - pode ser status_code 204 ou lista de riscos vazia
+    - insights_upgrade_risks_report.status == 204 or (insights_upgrade_risks_report.json is defined and insights_upgrade_risks_report.json.risks is defined and insights_upgrade_risks_report.json.risks | length == 0)
+
+ * Nota: Para usar esta tarefa, você precisaria obter o UUID do cluster gerenciado e configurar uma forma segura de autenticar nas APIs do Red Hat Cloud Services. O UUID do cluster geralmente está disponível no ACM ou na console do OpenShift.
+Integração no Checklist e Workflow:
+ * No Checklist Pré-Upgrade: Mantenha "Executar a análise de Upgrade Risks no Red Hat Insights" como um item de alta prioridade.
+ * No Workflow AAP: Adicione a tarefa que consulta a API do Insights como um dos primeiros passos nos seus checks pré-upgrade (idealmente, após verificar a conectividade básica com o cluster/ACM). Configure o fluxo para falhar se o Insights reportar riscos que você considera inaceitáveis para prosseguir.
+A verificação do Insights/Upgrade Risks é uma camada de segurança fundamental que utiliza a inteligência da Red Hat para ir além das métricas de saúde básicas e identificar problemas potenciais com base em experiências passadas de outros clientes. Integrá-la na sua automação torna seu processo de upgrade de frota significativamente mais seguro.
+---
+Okay, vamos traduzir os itens do checklist em queries PromQL para consultar o Thanos, estruturar um dashboard Grafana e esboçar o código Ansible para automatizar essas verificações.
+Parte 1: Queries PromQL para o Checklist (Consultando Thanos)
+Aqui estão queries PromQL correspondentes a muitos dos itens do checklist. Lembre-se de que você precisará adicionar o filtro cluster="{{cluster}}" a cada query para que funcione com a variável cluster do Grafana ou com loops em código Ansible, onde {{cluster}} seria substituído pelo nome do cluster atual.
+Assumindo Variável Grafana/Ansible cluster:
+ * Status Geral do ClusterVersion:
+   * cluster_version_condition{type="Available", status="False", cluster="{{cluster}}}" (Retorna 1 se não Available)
+   * cluster_version_condition{type="Degraded", status="True", cluster="{{cluster}}}" (Retorna 1 se Degraded)
+   * cluster_version_condition{type="Progressing", status="True", cluster="{{cluster}}}" (Retorna 1 se Progressing - para pré-check, você quer que isto seja 0)
+ * Saúde do Plano de Controle:
+   * apiserver_up{cluster="{{cluster}}}" (Retorna 0 se o apiserver estiver inativo em uma instância)
+   * etcd_server_ready{cluster="{{cluster}}}" (Retorna 0 se um membro do etcd não estiver pronto)
+   * increase(etcd_server_leader_changes_seen_total{cluster="{{cluster}}}[5m]) > 0 (Retorna 1 se houver mudança de líder etcd nos últimos 5 minutos - ajuste o intervalo)
+   * increase(kube_controller_manager_leader_change_total{cluster="{{cluster}}}[5m]) > 0 (Mudanças de líder no controller-manager)
+   * increase(kube_scheduler_leader_changes_total{cluster="{{cluster}}}[5m]) > 0 (Mudanças de líder no scheduler)
+ * Saúde e Status dos Operators:
+   * cluster_operator_conditions{condition="Available", status="False", cluster="{{cluster}}}" (Retorna 1 para Operators não Available)
+   * cluster_operator_conditions{condition="Degraded", status="True", cluster="{{cluster}}}" (Retorna 1 para Operators Degraded)
+   * cluster_operator_conditions{condition="Progressing", status="True", cluster="{{cluster}}}" (Retorna 1 para Operators Progressing - para pré-check, você quer 0)
+   * (Compatibilidade de Operators do OperatorHub: Principalmente checagem de documentação externa ou ACM, NÃO disponível via PromQL padrão)
+ * Saúde e Recursos dos Nós:
+   * kube_node_status_condition{condition="Ready", status="false", cluster="{{cluster}}}" (Retorna 1 para nós não Ready)
+   * node_cpu_utilization{cluster="{{cluster}}", job="node-exporter"} > 0.8 (Exemplo: Utilização de CPU > 80%)
+   * node_memory_utilization{cluster="{{cluster}}", job="node-exporter"} > 0.8 (Exemplo: Utilização de Memória > 80%)
+   * node_filesystem_avail_bytes{job="node-exporter", mountpoint="/sysroot/", cluster="{{cluster}}"} / node_filesystem_size_bytes{job="node-exporter", mountpoint="/sysroot/", cluster="{{cluster}}"} < 0.15 (Exemplo: Espaço livre no root < 15%)
+   * kubelet_pleg_healthy{cluster="{{cluster}}", job="kubelet"} == 0 (Retorna 1 se o Kubelet PLEG não está saudável)
+   * (Nós que não conseguem drenar/PDBs: Não há métricas diretas padrão para "PDB está bloqueando drenagem". A checagem de PDBs é feita via oc/kubectl. Monitorar nós não-Ready ou MachineConfigPools travados é o mais próximo via métricas).
+ * Saúde de Armazenamento:
+   * kube_persistentvolumeclaim_status_phase{phase=~"Pending|Lost", cluster="{{cluster}}}" (Retorna 1 para PVCs em estado problemático)
+   * kubelet_volume_stats_available_bytes{cluster="{{cluster}}", job="kubelet"} < 10737418240 (Exemplo: Espaço livre em PVs < 10GB - ajuste o valor)
+   * (Saúde da Solução de Armazenamento: Depende da solução, pode haver métricas específicas do Ceph/OCS ou do provedor de nuvem).
+ * Saúde de Rede:
+   * cluster_operator_conditions{name="network", condition="Degraded", status="True", cluster="{{cluster}}}" (Retorna 1 se o Network Operator está Degraded)
+   * cluster_operator_conditions{name="dns", condition="Degraded", status="True", cluster="{{cluster}}}" (Retorna 1 se o DNS Operator está Degraded)
+ * Status de Alerta:
+   * ALERTS{severity="error", alertstate="firing", cluster="{{cluster}}}" (Retorna 1 para alertas de erro disparando)
+   * ALERTS{severity="warning", alertstate="firing", cluster="{{cluster}}}" (Retorna 1 para alertas de warning disparando)
+ * Prontidão de Microserviços/Aplicações de Negócio:
+   * kube_deployment_status_replicas_available{namespace="{{namespace}}", cluster="{{cluster}}"} != kube_deployment_status_replicas{namespace="{{namespace}}", cluster="{{cluster}}}" (Retorna 1 se réplicas disponíveis != desejadas para deployments)
+   * increase(kube_pod_container_status_restarts_total{namespace="{{namespace}}", cluster="{{cluster}}}[5m]) > 0 (Retorna 1 se houver reinícios de pods nos últimos 5 minutos)
+   * (Uso de APIs Depreciadas/Removidas: Não disponível via PromQL padrão. Requer análise estática de código/YAMLs ou auditoria da API).
+Parte 2: Dashboard e/ou Folder no Grafana
+Você pode organizar essas métricas no Grafana para visualização.
+ * Criar um Folder (Pasta): No menu lateral do Grafana, passe o mouse sobre o ícone de Dashboards, clique em "New Folder" (Nova Pasta) e dê um nome (ex: "OpenShift Upgrade Readiness"). Isso ajuda a organizar seus dashboards.
+ * Criar um Dashboard: Dentro da pasta que você criou, clique em "New Dashboard" (Novo Dashboard).
+ * Configurar Variáveis: Siga os passos que discutimos para adicionar as variáveis cluster e namespace (ambas com a opção "Include All") no topo do dashboard. A variável cluster deve usar a query label_values(acm_managed_cluster_labels, name) para listar todos os clusters.
+ * Criar Painéis por Categoria: Adicione painéis para cada seção principal do checklist:
+   * Painel: Saúde Geral do Cluster (ClusterVersion)
+     * Tipo: Tabela ou Status.
+     * Query A: cluster_version_condition{type="Available", cluster="{{cluster}}}" (Mostrar status True/False)
+     * Query B: cluster_version_condition{type="Degraded", cluster="{{cluster}}}" (Mostrar status True/False)
+     * Query C: cluster_version_condition{type="Progressing", cluster="{{cluster}}}" (Mostrar status True/False)
+   * Painel: Saúde dos Operators
+     * Tipo: Tabela ou State Timeline.
+     * Query A: cluster_operator_conditions{cluster="{{cluster}}}" (Exibir todas as condições de todos os Operators)
+     * Query B: cluster_operator_conditions{condition="Degraded", status="True", cluster="{{cluster}}}" (Filtro para mostrar apenas os Degraded)
+     * Query C: cluster_operator_conditions{condition="Available", status="False", cluster="{{cluster}}}" (Filtro para mostrar apenas os não Available)
+   * Painel: Saúde dos Nós
+     * Tipo: Tabela (Status Ready/PLEG), Gráfico (Utilização), Gauge (Espaço em Disco).
+     * Query A: kube_node_status_condition{condition="Ready", cluster="{{cluster}}}"
+     * Query B: kubelet_pleg_healthy{cluster="{{cluster}}}"
+     * Query C: node_cpu_utilization{job="node-exporter", cluster="{{cluster}}}"
+     * Query D: (node_filesystem_avail_bytes{job="node-exporter", mountpoint="/sysroot/", cluster="{{cluster}}"} / node_filesystem_size_bytes{job="node-exporter", mountpoint="/sysroot/", cluster="{{cluster}}"}) * 100
+   * Painel: Status de Alerta
+     * Tipo: Tabela.
+     * Query A: ALERTS{alertstate="firing", cluster="{{cluster}}}" (Mostrar todos os alertas disparando)
+     * Query B: ALERTS{severity="error", alertstate="firing", cluster="{{cluster}}}" (Filtro para erros)
+   * Painel: Saúde de Armazenamento (PVCs)
+     * Tipo: Tabela.
+     * Query A: kube_persistentvolumeclaim_status_phase{phase=~"Pending|Lost", cluster="{{cluster}}}" (Mostrar PVCs problemáticos)
+   * Painel: Saúde de Microserviços (Exemplos Limitados via Métricas)
+     * Tipo: Tabela (Rollout, Restarts).
+     * Query A: kube_deployment_status_replicas_available{namespace=~"$namespace", cluster="{{cluster}}"} != kube_deployment_status_replicas{namespace=~"$namespace", cluster="{{cluster}}}" (Deployments não completos)
+     * Query B: sum by (pod, namespace) (increase(kube_pod_container_status_restarts_total{namespace=~"$namespace", cluster="{{cluster}}}[5m])) > 0 (Pods com reinícios recentes)
+ * Salvar: Salve o dashboard na pasta criada.
+Parte 3: Código Ansible para Automatizar os Checks (Usando Thanos)
+Este é um esqueleto de playbook Ansible que usa as queries PromQL para verificar o estado do cluster. Ele se conectaria ao Thanos Query API (geralmente no Hub ACM) para obter os dados.
+---
+- name: Automated OpenShift Upgrade Readiness Checks via Thanos
+  hosts: localhost # Execute a partir de um host com acesso ao Thanos API
+  connection: local
+  gather_facts: no
+
+  vars:
+    # Obtido do Workflow Template ou definido aqui se for um Job Template único
+    target_cluster_name: "my-managed-cluster-1" # Substitua pela variável que contém o nome do cluster
+    thanos_query_url: "https://thanos-query.acm.svc:9443" # Sua URL da API do Thanos Query
+    thanos_api_token: "{{ lookup('ansible.builtin.env', 'THANOS_API_TOKEN') }}" # Obter de forma segura
+
+  tasks:
+    - name: --- Starting Upgrade Readiness Checks for {{ target_cluster_name }} ---
+      debug:
+        msg: "Executing checks via Thanos API."
+
+    # Check 1.1: ClusterVersion Degraded
+    - name: Query Thanos for ClusterVersion Degraded status
+      ansible.builtin.uri:
+        url: "{{ thanos_query_url }}/api/v1/query"
+        validate_certs: no
+        headers: { "Authorization": "Bearer {{ thanos_api_token }}" }
+        args: { "query": 'cluster_version_condition{type="Degraded", status="True", cluster="{{target_cluster_name}}}"' }
+        status_code: 200
+      register: cv_degraded_query
+
+    - name: Fail check if ClusterVersion is Degraded
+      fail:
+        msg: "Check failed: ClusterVersion is in Degraded state on {{ target_cluster_name }}."
+      when:
+        - cv_degraded_query.json.data.result is defined
+        - cv_degraded_query.json.data.result | length > 0 # Query retorna resultados se a condição for True
+
+    # Check 1.2: ClusterVersion Progressing (para pré-check, queremos FALSE)
+    - name: Query Thanos for ClusterVersion Progressing status
+      ansible.builtin.uri:
+        url: "{{ thanos_query_url }}/api/v1/query"
+        validate_certs: no
+        headers: { "Authorization": "Bearer {{ thanos_api_token }}" }
+        args: { "query": 'cluster_version_condition{type="Progressing", status="True", cluster="{{target_cluster_name}}}"' }
+        status_code: 200
+      register: cv_progressing_query
+
+    - name: Fail check if ClusterVersion is currently Progressing
+      fail:
+        msg: "Check failed: ClusterVersion is currently Progressing on {{ target_cluster_name }}. Cannot start new upgrade."
+      when:
+        - cv_progressing_query.json.data.result is defined
+        - cv_progressing_query.json.data.result | length > 0
+
+    # Check 2.1: Degraded ClusterOperators
+    - name: Query Thanos for Degraded ClusterOperators
+      ansible.builtin.uri:
+        url: "{{ thanos_query_url }}/api/v1/query"
+        validate_certs: no
+        headers: { "Authorization": "Bearer {{ thanos_api_token }}" }
+        args: { "query": 'count(cluster_operator_conditions{condition="Degraded", status="True", cluster="{{target_cluster_name}}"})' } # Conta Operators Degraded
+        status_code: 200
+      register: degraded_operators_count_query
+
+    - name: Fail check if Degraded ClusterOperators found
+      fail:
+        msg: "Check failed: {{ degraded_operators_count_query.json.data.result[0].value[1] | default(0) }} Degraded ClusterOperators found on {{ target_cluster_name }}."
+      when:
+        - degraded_operators_count_query.json.data.result is defined
+        - degraded_operators_count_query.json.data.result | length > 0
+        - degraded_operators_count_query.json.data.result[0].value is defined
+        - degraded_operators_count_query.json.data.result[0].value | length > 1
+        - degraded_operators_count_query.json.data.result[0].value[1] | float > 0
+
+    # Check 2.2: Unavailable ClusterOperators
+    - name: Query Thanos for Unavailable ClusterOperators
+      ansible.builtin.uri:
+        url: "{{ thanos_query_url }}/api/v1/query"
+        validate_certs: no
+        headers: { "Authorization": "Bearer {{ thanos_api_token }}" }
+        args: { "query": 'count(cluster_operator_conditions{condition="Available", status="False", cluster="{{target_cluster_name}"})' } # Conta Operators não Available
+        status_code: 200
+      register: unavailable_operators_count_query
+
+    - name: Fail check if Unavailable ClusterOperators found
+      fail:
+        msg: "Check failed: {{ unavailable_operators_count_query.json.data.result[0].value[1] | default(0) }} Unavailable ClusterOperators found on {{ target_cluster_name }}."
+      when:
+        - unavailable_operators_count_query.json.data.result is defined
+        - unavailable_operators_count_query.json.data.result | length > 0
+        - unavailable_operators_count_query.json.data.result[0].value is defined
+        - unavailable_operators_count_query.json.data.result[0].value | length > 1
+        - unavailable_operators_count_query.json.data.result[0].value[1] | float > 0
+
+    # Check 3.1: Nodes not Ready
+    - name: Query Thanos for Nodes not Ready
+      ansible.builtin.uri:
+        url: "{{ thanos_query_url }}/api/v1/query"
+        validate_certs: no
+        headers: { "Authorization": "Bearer {{ thanos_api_token }}" }
+        args: { "query": 'count(kube_node_status_condition{condition="Ready", status="false", cluster="{{target_cluster_name}"})' } # Conta nós não Ready
+        status_code: 200
+      register: non_ready_nodes_count_query
+
+    - name: Fail check if Nodes not Ready
+      fail:
+        msg: "Check failed: {{ non_ready_nodes_count_query.json.data.result[0].value[1] | default(0) }} Nodes not Ready found on {{ target_cluster_name }}."
+      when:
+        - non_ready_nodes_count_query.json.data.result is defined
+        - non_ready_nodes_count_query.json.data.result | length > 0
+        - non_ready_nodes_count_query.json.data.result[0].value is defined
+        - non_ready_nodes_count_query.json.data.result[0].value | length > 1
+        - non_ready_nodes_count_query.json.data.result[0].value[1] | float > 0
+
+    # Adicione mais checks aqui para Alertas, PVCs, Utilização de Recursos, etc.
+    # Siga o mesmo padrão: Query Thanos -> Register -> Fail based on result count/value
+
+    # --- Checks que NÃO SÃO VIA PROMQL ---
+    # Estes exigiriam tarefas diferentes no Ansible, possivelmente executadas
+    # conectadas diretamente ao cluster gerenciado ou usando a API do ACM de outra forma.
+
+    # Check: PDBs restritivos (Exige 'oc' ou K8s API)
+    # - name: Check for restrictive PDBs (Requires direct cluster access)
+    #   command: "oc get pdb -A -o json" # Obter todos os PDBs
+    #   delegate_to: "{{ target_cluster_name }}" # Exemplo se AAP pode conectar diretamente
+    #   # ... Analisar output JSON para disruptionsAllowed ...
+
+    # Check: Uso de APIs Depreciadas/Removidas (Exige análise estática ou auditoria da API)
+    # - name: Check for deprecated APIs (Requires separate tooling/process)
+    #   debug:
+    #     msg: "Manual or separate automated check needed for deprecated APIs."
+
+    # Check: Compatibilidade de OperatorHub Operators (Exige checagem de documentação ou ACM)
+    # - name: Check OperatorHub compatibility matrix (Requires external check/tool)
+    #   debug:
+    #     msg: "Manual or separate automated check needed for OperatorHub compatibility matrix."
+
+    - name: --- All Automated Readiness Checks Passed for {{ target_cluster_name }} ---
+      debug:
+        msg: "Automated readiness checks via Thanos passed for {{ target_cluster_name }}. Cluster is potentially ready for upgrade."
+
+Como Usar no AAP Workflow:
+ * Crie um Job Template no AAP usando o playbook acima. Configure para receber o nome do cluster (target_cluster_name), a URL do Thanos e o token como variáveis extras. Use um Credential no AAP para o token do Thanos API.
+ * No seu Workflow Template, crie um nó que executa este Job Template.
+ * Se você estiver fazendo isso para um pool de clusters, o Workflow Template pode ter um loop sobre a lista de nomes de clusters no pool, executando este Job Template de check para cada um.
+ * Configure o link do nó de check para o próximo passo do workflow (por exemplo, o nó que inicia o upgrade do pool) como "On Success". Se qualquer uma das tarefas fail dentro do playbook de check for acionada, o Job Template falhará, o nó no Workflow falhará e o Workflow não prosseguirá para o upgrade.
+Este framework fornece a espinha dorsal para automatizar muitos dos checks via métricas centralizadas. Lembre-se de que os checks que não são baseados em métricas Prometheus padrão (APIs, PDBs, compatibilidade de Operator Hub) exigirão abordagens diferentes e tarefas Ansible separadas, possivelmente executadas com acesso direto ao cluster gerenciado ou usando outras ferramentas.
