@@ -299,3 +299,79 @@ Os exemplos fornecidos são blocos de construção. A criação de um playbook c
  * Definir os limiares aceitáveis para métricas e estados.
  * Testar exaustivamente o playbook em ambientes de não produção.
 A lógica para pausar/continuar workers com base em um contador específico de nós (maxUnavailable) teria que ser implementada como lógica condicional (usando when) no seu playbook Ansible, monitorando o estado dos nós ou MCPs e executando as tasks de patch do MCP conforme necessário.
+---
+Bom dia! Que ótimo ver o entusiasmo em automatizar o processo.
+A ideia de ter uma única query PromQL que retorne um "sinal" simples (0 ou 1, ou um contador) para indicar se o cluster está pronto para o upgrade é atraente pela simplicidade na automação. No entanto, é importante notar que uma única query complexa assim sacrifica a granularidade – se ela retornar um estado de "bloqueio", você não saberá imediatamente qual foi o fator bloqueador sem executar queries mais específicas.
+Dito isso, podemos construir uma query que conta a ocorrência dos principais problemas que consideramos bloqueadores (operators degradados, nós não-ready, alertas de erro ativos, PVCs problemáticos, etc.). Se a contagem total for zero, podemos considerar o cluster potencialmente pronto. Se for maior que zero, algo está bloqueando.
+Query PromQL (Contagem de Problemas Conhecidos):
+Esta query soma a contagem de ocorrências de diferentes métricas que indicam problemas críticos para um upgrade. Substitua {{target_cluster_name}} pela variável Ansible que contém o nome do cluster atual sendo verificado.
+  count(cluster_operator_conditions{condition="Degraded", status="True", cluster="{{target_cluster_name}}"})
++ count(kube_node_status_condition{condition="Ready", status="false", cluster="{{target_cluster_name}"})
++ count(ALERTS{severity="error", alertstate="firing", cluster="{{target_cluster_name}"})
++ count(kube_persistentvolumeclaim_status_phase{phase=~"Pending|Lost", cluster="{{target_cluster_name}"})
+# Adicione aqui outras condições de contagem se aplicável, como contagem de nós com disco cheio, etc.
+# Certifique-se de que cada parte da soma retorna um número (use count() ou sum() conforme necessário)
+
+ * O que esta query faz: Ela consulta o Thanos para o cluster especificado, conta quantos Operators estão Degraded, quantos Nós não estão Ready, quantos ALERTS de severidade error estão disparando e quantos PVCs estão em estado Pending ou Lost. A soma desses contadores é o resultado.
+ * Interpretação:
+   * Resultado = 0: Nenhum dos problemas específicos contados foi detectado. O cluster está potencialmente "liberado" com base nesses checks.
+   * Resultado > 0: Um ou mais problemas específicos contados foram detectados. O cluster está "bloqueado".
+Job Template Ansible (Check desta Métrica 0 ou 1):
+Este Job Template seria parte da sua fase de "Checks Pré-Upgrade" e seria executado para cada cluster no pool (dentro de um loop ou sub-workflow no AAP). Ele falhará se a métrica de contagem de problemas for maior que zero.
+# Arquivo: tasks/check_upgrade_readiness_metric.yml
+# Este arquivo seria incluído no loop sobre clusters dentro de tasks/run_cluster_checks.yml
+
+- name: Query Thanos for combined upgrade readiness metric on {{ target_cluster_name }}
+  ansible.builtin.uri:
+    url: "{{ thanos_query_url }}/api/v1/query" # Sua URL da API do Thanos Query
+    validate_certs: no # Ajuste conforme sua configuração TLS
+    headers:
+      Authorization: "Bearer {{ thanos_api_token }}" # Token para autenticação no Thanos API
+    args:
+      # A query PromQL definida acima, passada como um argumento para a API
+      query: 'count(cluster_operator_conditions{condition="Degraded", status="True", cluster="{{target_cluster_name}}"}) + count(kube_node_status_condition{condition="Ready", status="false", cluster="{{target_cluster_name}"}) + count(ALERTS{severity="error", alertstate="firing", cluster="{{target_cluster_name}"}) + count(kube_persistentvolumeclaim_status_phase{phase=~"Pending|Lost", cluster="{{target_cluster_name}"})'
+    status_code: 200
+  register: combined_readiness_query_result
+  delegate_to: localhost # Execute a partir de um host com acesso ao Thanos API
+
+- name: Evaluate combined readiness metric
+  # A API do Prometheus/Thanos retorna um vetor instantâneo em .json.data.result
+  # O valor da métrica está geralmente em .json.data.result[0].value[1]
+  set_fact:
+    problems_count: "{{ combined_readiness_query_result.json.data.result[0].value[1] | default(0) | int }}"
+  when:
+    # Garante que a estrutura esperada existe e que há um resultado válido
+    - combined_readiness_query_result.json.data.result is defined
+    - combined_readiness_query_result.json.data.result | length > 0
+    - combined_readiness_query_result.json.data.result[0].value is defined
+    - combined_readiness_query_result.json.data.result[0].value | length > 1
+
+- name: Set problems_count to 0 if no results returned (implies no issues found)
+  set_fact:
+    problems_count: 0
+  when:
+    # Caso a query retorne um vetor vazio (nenhuma série temporal atende à condição),
+    # o que geralmente significa que a contagem é zero para todos os componentes.
+    - combined_readiness_query_result.json.data.result is defined
+    - combined_readiness_query_result.json.data.result | length == 0
+
+- name: Fail pre-check if problems count > 0 on {{ target_cluster_name }}
+  fail:
+    msg: "Pre-upgrade check failed on {{ target_cluster_name }}: Found {{ problems_count }} blocking issues (Degraded Operators, Non-Ready Nodes, Error Alerts, Problematic PVCs)."
+  when: problems_count is defined and problems_count > 0
+
+- name: Indicate {{ target_cluster_name }} is potentially ready for upgrade
+  debug:
+    msg: "Cluster {{ target_cluster_name }} passed the combined readiness check (Problems Count: 0)."
+  when: problems_count is defined and problems_count == 0
+
+Como integrar isso ao Workflow AAP:
+ * Crie um Job Template no AAP para o playbook principal (o que itera sobre os pools).
+ * Crie um Job Template para o playbook/arquivo tasks/run_cluster_checks.yml. Este JT receberia o nome do cluster (target_cluster_name) como uma extra_var.
+ * Dentro do seu Workflow Template principal, adicione um nó que chama o Job Template de run_cluster_checks para cada cluster no pool.
+ * Configure o link entre este nó de check e o próximo nó do workflow (ex: "Iniciar Upgrade Pool") para ser "On Success". Se a task Fail pre-check if problems count > 0 falhar (o que acontece quando problems_count > 0), o nó no workflow falhará, e o fluxo não passará para a etapa de iniciar o upgrade.
+Vantagens e Desvantagens desta abordagem de "Métrica Única":
+ * Vantagem: Simples para o workflow do AAP decidir entre "continuar" (0 problemas) e "parar" (>0 problemas).
+ * Desvantagem: Se o check falhar, o relatório do AAP apenas dirá "Problemas Encontrados: X". Você não saberá diretamente no relatório do AAP quais problemas foram (ex: 2 Operators degradados e 1 alerta). Para diagnosticar, você ainda precisará executar queries PromQL mais específicas (como as que discutimos antes) ou verificar a UI do OpenShift/ACM.
+Para um diagnóstico mais rápido em caso de falha, uma abordagem alternativa (que evita a "métrica única" sintética) seria ter tarefas fail separadas para cada tipo de check (como fizemos nos exemplos iniciais de pre_checks.yml). Isso faria com que o relatório do AAP indicasse diretamente qual check específico falhou (ex: "Check for Degraded ClusterOperators failed"). Ambas as abordagens são válidas, dependendo da sua preferência por simplicidade vs. granularidade nos relatórios de falha.
+Escolha a abordagem que melhor se alinha com a forma como sua equipe prefere diagnosticar problemas quando a automação indica um bloqueio. A métrica única funciona bem para a condição binária (Liberado/Bloqueado) no workflow.
