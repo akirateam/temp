@@ -375,3 +375,47 @@ Vantagens e Desvantagens desta abordagem de "Métrica Única":
  * Desvantagem: Se o check falhar, o relatório do AAP apenas dirá "Problemas Encontrados: X". Você não saberá diretamente no relatório do AAP quais problemas foram (ex: 2 Operators degradados e 1 alerta). Para diagnosticar, você ainda precisará executar queries PromQL mais específicas (como as que discutimos antes) ou verificar a UI do OpenShift/ACM.
 Para um diagnóstico mais rápido em caso de falha, uma abordagem alternativa (que evita a "métrica única" sintética) seria ter tarefas fail separadas para cada tipo de check (como fizemos nos exemplos iniciais de pre_checks.yml). Isso faria com que o relatório do AAP indicasse diretamente qual check específico falhou (ex: "Check for Degraded ClusterOperators failed"). Ambas as abordagens são válidas, dependendo da sua preferência por simplicidade vs. granularidade nos relatórios de falha.
 Escolha a abordagem que melhor se alinha com a forma como sua equipe prefere diagnosticar problemas quando a automação indica um bloqueio. A métrica única funciona bem para a condição binária (Liberado/Bloqueado) no workflow.
+---
+Certo, vamos adicionar a checagem da condição Available nas queries PromQL. A condição Available é fundamental, pois indica se um componente (como um Operator) ou o cluster como um todo está funcional e pronto para uso. Um estado Available: False em componentes críticos é definitivamente um bloqueador para um upgrade seguro.
+Relevância da Condição Available para Upgrades:
+ * cluster_operator_conditions{condition="Available", status="False"}: Se um Operator principal não está Available, significa que a funcionalidade que ele gerencia (rede, autenticação, etc.) não está operando corretamente. Um upgrade não pode prosseguir ou será extremamente arriscado se componentes essenciais estiverem inoperantes.
+ * cluster_version_condition{condition="Available", status="False"}: Esta métrica indica que o cluster OpenShift como um todo não está funcional. Isso geralmente é uma consequência de falhas críticas em componentes subjacentes e é um estado que deve ser evitado a todo custo, especialmente antes, durante ou imediatamente após um upgrade. Esta é uma checagem mais relevante na validação pós-upgrade para confirmar que o cluster se recuperou e está operacional na nova versão.
+Vamos atualizar a query PromQL combinada que conta os problemas conhecidos para incluir a contagem de Operators não Available.
+Query PromQL Atualizada (Incluindo Operators não Available):
+  count(cluster_operator_conditions{condition="Degraded", status="True", cluster="{{target_cluster_name}}"})
++ count(cluster_operator_conditions{condition="Available", status="False", cluster="{{target_cluster_name}"}) # Adicionado
++ count(kube_node_status_condition{condition="Ready", status="false", cluster="{{target_cluster_name}"})
++ count(ALERTS{severity="error", alertstate="firing", cluster="{{target_cluster_name}"})
++ count(kube_persistentvolumeclaim_status_phase{phase=~"Pending|Lost", cluster="{{target_cluster_name}"})
+# Mantenha ou adicione outras contagens conforme necessário
+
+ * O que mudou: Adicionamos a contagem de cluster_operator_conditions onde condition="Available" e status="False". Agora, a query somará todos os problemas listados anteriormente mais os Operators que não estão disponíveis.
+ * Interpretação:
+   * Resultado = 0: Nenhum dos problemas específicos contados (incluindo Operators não Available) foi detectado.
+   * Resultado > 0: Um ou mais problemas foram detectados.
+Integração no Job Template Ansible:
+Você usará exatamente a mesma tarefa Ansible (tasks/check_upgrade_readiness_metric.yml ou similar) que definimos anteriormente. A única mudança é que a string da query PromQL passada para o módulo ansible.builtin.uri será a nova query atualizada acima.
+A lógica da tarefa (consultar a API, extrair o valor da contagem, definir problems_count, e falhar se problems_count > 0) permanece idêntica.
+# Exemplo de como ficaria a task atualizada em tasks/check_upgrade_readiness_metric.yml
+- name: Query Thanos for combined upgrade readiness metric on {{ target_cluster_name }} (Updated)
+  ansible.builtin.uri:
+    url: "{{ thanos_query_url }}/api/v1/query"
+    validate_certs: no
+    headers:
+      Authorization: "Bearer {{ thanos_api_token }}"
+    args:
+      query: | # Usando barra vertical para multiline string para melhor leitura
+        count(cluster_operator_conditions{condition="Degraded", status="True", cluster="{{target_cluster_name}}"})
+        + count(cluster_operator_conditions{condition="Available", status="False", cluster="{{target_cluster_name}"})
+        + count(kube_node_status_condition{condition="Ready", status="false", cluster="{{target_cluster_name}"})
+        + count(ALERTS{severity="error", alertstate="firing", cluster="{{target_cluster_name}"})
+        + count(kube_persistentvolumeclaim_status_phase{phase=~"Pending|Lost", cluster="{{target_cluster_name}"})
+    status_code: 200
+  register: combined_readiness_query_result
+  delegate_to: localhost
+
+# As tarefas subsequentes para processar combined_readiness_query_result
+# (set_fact para problems_count e a tarefa fail) permanecem as mesmas.
+# ... (Resto do código da task/check_upgrade_readiness_metric.yml)
+
+Adicionar a contagem de Operators não Available torna a sua checagem de prontidão combinada mais robusta, incluindo um dos indicadores mais fortes de problemas na funcionalidade do cluster.
