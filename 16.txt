@@ -47,3 +47,5 @@ sum by(cluster) (
       kube_node_role{role!~"worker|"}
     )
 )
+---
+oc get nodes --no-headers -o custom-columns=CPU_CORES:.status.capacity.cpu | awk '{s+=$1} END {print s}'
