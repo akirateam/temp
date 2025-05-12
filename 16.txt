@@ -27,3 +27,23 @@ sum(
       kube_node_role{role!~"worker|"}
     )
 )
+---
+sum by(cluster_id) (
+  machine_cpu_cores
+    * on(node)  # Multiplica/filtra machine_cpu_cores, casando pelo label 'node'
+    (
+      kube_node_role{role="worker"}  # Nodes que SÃO workers
+        unless on(node)             # EXCLUINDO nodes que... (casando pelo label 'node')
+      kube_node_role{role!~"worker|"} # ...possuem QUALQUER OUTRA role além de 'worker'
+    )
+)
+---
+sum by(cluster) (
+  machine_cpu_cores
+    * on(node)
+    (
+      kube_node_role{role="worker"}
+        unless on(node)
+      kube_node_role{role!~"worker|"}
+    )
+)
