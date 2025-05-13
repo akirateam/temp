@@ -1,0 +1,189 @@
+apiVersion: addon.open-cluster-management.io/v1alpha1
+kind: ClusterManagementAddOn
+metadata:
+  name: managed-serviceaccount
+spec:
+  addOnMeta:
+    description: managed-serviceaccount
+    displayName: managed-serviceaccount
+  installStrategy:
+    placements:
+    - name: global
+      namespace: open-cluster-management-global-set
+      rolloutStrategy:
+        type: All
+    type: Placements
+  supportedConfigs:
+  - group: addon.open-cluster-management.io
+    resource: addondeploymentconfigs
+  - defaultConfig:
+      name: managed-serviceaccount-2.7
+    group: addon.open-cluster-management.io
+    resource: addontemplates
+
+---
+
+apiVersion: addon.open-cluster-management.io/v1alpha1
+kind: AddOnTemplate
+metadata:
+  annotations:
+    installer.multicluster.openshift.io/release-version: 2.7.4
+  creationTimestamp: "2025-04-28T20:26:43Z"
+  generation: 1
+  labels:
+    backplaneconfig.name: multiclusterengine
+  name: managed-serviceaccount-2.7
+  ownerReferences:
+  - apiVersion: multicluster.openshift.io/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: MultiClusterEngine
+    name: multiclusterengine
+    uid: 154da996-9aaa-4877-a4f7-db889c7cd423
+  resourceVersion: "100740"
+  uid: 3c39e82f-f979-4a44-951c-a34310fa2d73
+spec:
+  addonName: managed-serviceaccount
+  agentSpec:
+    workload:
+      manifests:
+      - apiVersion: v1
+        kind: Namespace
+        metadata:
+          annotations:
+            addon.open-cluster-management.io/deletion-orphan: ""
+          labels:
+            addon.open-cluster-management.io/namespace: "true"
+          name: open-cluster-management-agent-addon
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRole
+        metadata:
+          name: open-cluster-management:managed-serviceaccount:addon-agent
+        rules:
+        - apiGroups:
+          - authentication.k8s.io
+          resources:
+          - tokenreviews
+          verbs:
+          - create
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: open-cluster-management:managed-serviceaccount:addon-agent{{INSTALL_NAMESPACE}}
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: open-cluster-management:managed-serviceaccount:addon-agent
+        subjects:
+        - kind: ServiceAccount
+          name: managed-serviceaccount
+          namespace: open-cluster-management-agent-addon
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: managed-serviceaccount-addon-agent
+          namespace: open-cluster-management-agent-addon
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              addon-agent: managed-serviceaccount
+          template:
+            metadata:
+              annotations:
+                target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+              labels:
+                addon-agent: managed-serviceaccount
+            spec:
+              containers:
+              - args:
+                - --cluster-name={{CLUSTER_NAME}}
+                - --kubeconfig={{HUB_KUBECONFIG}}
+                - --feature-gates=EphemeralIdentity=true
+                command:
+                - /agent
+                image: registry.redhat.io/multicluster-engine/managed-serviceaccount-rhel9@sha256:cb3fe3785f46f7bb4115c5bac99d5959e48670c9c803e12da9dacd34dd4979ae
+                imagePullPolicy: IfNotPresent
+                livenessProbe:
+                  httpGet:
+                    path: /healthz
+                    port: 8000
+                  initialDelaySeconds: 2
+                  periodSeconds: 10
+                name: addon-agent
+              serviceAccount: managed-serviceaccount
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: open-cluster-management:managed-serviceaccount:addon-agent
+          namespace: open-cluster-management-agent-addon
+        rules:
+        - apiGroups:
+          - ""
+          resources:
+          - events
+          verbs:
+          - create
+        - apiGroups:
+          - ""
+          resources:
+          - serviceaccounts
+          - serviceaccounts/token
+          verbs:
+          - get
+          - watch
+          - list
+          - create
+          - delete
+        - apiGroups:
+          - coordination.k8s.io
+          resources:
+          - leases
+          verbs:
+          - get
+          - create
+          - update
+          - patch
+        - apiGroups:
+          - authentication.k8s.io
+          resources:
+          - tokenrequests
+          verbs:
+          - get
+          - create
+          - update
+          - patch
+        - apiGroups:
+          - ""
+          resources:
+          - secrets
+          verbs:
+          - get
+          - list
+      - apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: open-cluster-management:managed-serviceaccount:addon-agent
+          namespace: open-cluster-management-agent-addon
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: open-cluster-management:managed-serviceaccount:addon-agent
+        subjects:
+        - kind: ServiceAccount
+          name: managed-serviceaccount
+          namespace: open-cluster-management-agent-addon
+      - apiVersion: v1
+        imagePullSecrets:
+        - name: open-cluster-management-image-pull-credentials
+        kind: ServiceAccount
+        metadata:
+          name: managed-serviceaccount
+          namespace: open-cluster-management-agent-addon
+  registration:
+  - kubeClient:
+      hubPermissions:
+      - currentCluster:
+          clusterRoleName: managed-serviceaccount-addon-agent
+        type: CurrentCluster
+    type: KubeClient
