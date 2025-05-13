@@ -1,0 +1,483 @@
+Com base nas melhorias discutidas, vou gerar os códigos completos para as partes modificadas e a nova role de comparação. Lembre-se que você precisará integrar essas novas tarefas e roles ao seu workflow existente no AAP e garantir que as variáveis (como shared_path, credenciais) estejam configuradas corretamente no AAP e acessíveis pelos Execution Environments.
+Estrutura de Pastas Atualizada:
+automacoes/upgrade-diff/
+├── roles/
+│   ├── diff_checker_ocp/ (...)
+│   ├── health_check_pos_upgrade/
+│   │   ├── tasks/
+│   │   │   ├── capture_post_upgrade_state.yml # NOVO
+│   │   │   └── main.yml # MODIFICADO
+│   │   └── (...)
+│   ├── health_check_upgrade/
+│   │   ├── tasks/
+│   │   │   ├── capture_pre_upgrade_state.yml # NOVO
+│   │   │   └── main.yml # MODIFICADO
+│   │   └── (...)
+│   ├── in_place_state_comparator/ # NOVA ROLE
+│   │   ├── tasks/
+│   │   │   ├── main.yml
+│   │   │   ├── compare_resources.yml
+│   │   │   └── generate_report.yml
+│   │   ├── templates/
+│   │   │   └── report.j2 # NOVO/APRIMORADO
+│   │   ├── vars/
+│   │   │   └── main.yml
+│   │   ├── defaults/
+│   │   │   └── main.yml
+│   │   └── README.md
+│   ├── mirror_images/ (...)
+│   ├── must_gather/ (...)
+│   ├── upgrade_aro/ (...)
+│   └── upgrade_disconnected_ocp/ (...)
+├── playbooks/ (...)
+├── acm_inventory.py (...)
+└── README.md # MODIFICADO para descrever o workflow
+
+Códigos Atualizados/Novos:
+1. Role health_check_upgrade (Adicionar Snapshot "Antes")
+ * automacoes/upgrade-diff/roles/health_check_upgrade/tasks/capture_pre_upgrade_state.yml (Novo arquivo)
+---
+- name: "CAPTURE STATE (BEFORE): Ensure snapshots directory exists for {{ cluster_name }}"
+  ansible.builtin.file:
+    path: "{{ shared_path }}/snapshots/{{ cluster_name }}/before"
+    state: directory
+    mode: '0755'
+  # Delegar para o host onde o shared_path está montado/acessível
+  delegate_to: "{{ groups['bastion'][0] if groups['bastion'] is defined else 'localhost' }}" # Exemplo: delegar para o primeiro host no grupo 'bastion' ou localhost
+
+- name: "CAPTURE STATE (BEFORE): Get user-defined namespaces"
+  kubernetes.core.k8s_info:
+    kind: Namespace
+    api_version: v1
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_auth_results['openshift_auth']['api_key'] }}"
+    verify_ssl: false
+  register: all_namespaces_res
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (BEFORE): Filter out system namespaces"
+  set_fact:
+    user_namespaces: >-
+      {{ all_namespaces_res.resources
+         | map(attribute='metadata')
+         | selectattr('name', 'search', '^(?!kube-|openshift-).*') # Exclui namespaces que começam com kube- ou openshift-
+         | map(attribute='name') | list }}
+  delegate_to: localhost # Pode ser delegado ou não, dependendo de onde a variável será usada primariamente
+
+- name: "CAPTURE STATE (BEFORE): Define list of resource types to capture"
+  set_fact:
+    resources_to_snapshot:
+      - kind: Deployment
+        api_version: apps/v1
+      - kind: StatefulSet
+        api_version: apps/v1
+      - kind: DaemonSet
+        api_version: apps/v1
+      - kind: Service
+        api_version: v1
+      - kind: Route
+        api_version: route.openshift.io/v1
+      - kind: HorizontalPodAutoscaler
+        api_version: autoscaling/v2 # ou v1 dependendo da versão do OCP base
+      - kind: ImageStream # Específico do OpenShift
+        api_version: image.openshift.io/v1
+      # Adicione outros tipos relevantes conforme necessário:
+      # - kind: ConfigMap
+      #   api_version: v1
+      # - kind: Secret # Cuidado com dados sensíveis em snapshots!
+      #   api_version: v1
+      # - kind: PersistentVolumeClaim
+      #   api_version: v1
+      # - kind: PersistentVolume # Geralmente menos voláteis, mas pode ser útil
+      #   api_version: v1
+      # - kind: NetworkPolicy
+      #   api_version: networking.k8s.io/v1
+      # - kind: Role
+      #   api_version: rbac.authorization.k8s.io/v1
+      # - kind: RoleBinding
+      #   api_version: rbac.authorization.k8s.io/v1
+      # - kind: ServiceAccount
+      #   api_version: v1
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (BEFORE): Capture and save state for each resource type in user namespaces"
+  loop: "{{ resources_to_snapshot }}"
+  loop_control:
+    loop_var: resource_item
+  block:
+    - name: "CAPTURE STATE (BEFORE): Get {{ resource_item.kind }} state"
+      kubernetes.core.k8s_info:
+        kind: "{{ resource_item.kind }}"
+        api_version: "{{ resource_item.api_version }}"
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_auth_results['openshift_auth']['api_key'] }}"
+        verify_ssl: false
+        namespace: "{{ user_namespace }}" # Iterar por namespaces de usuário
+      register: resource_state_before
+      loop: "{{ user_namespaces }}"
+      loop_control:
+        loop_var: user_namespace
+      delegate_to: localhost
+
+    - name: "CAPTURE STATE (BEFORE): Combine {{ resource_item.kind }} resources from all user namespaces"
+      set_fact:
+        combined_resources_before: "{{ resource_state_before.results | map(attribute='resources') | flatten }}"
+      delegate_to: localhost
+
+    - name: "CAPTURE STATE (BEFORE): Save {{ resource_item.kind }} state to file"
+      ansible.builtin.copy:
+        content: "{{ combined_resources_before | to_nice_yaml }}"
+        dest: "{{ shared_path }}/snapshots/{{ cluster_name }}/before/{{ resource_item.kind | lower }}s.yaml" # Nome do arquivo no plural e minusculo
+        mode: '0644'
+      delegate_to: "{{ groups['bastion'][0] if groups['bastion'] is defined else 'localhost' }}"
+      when: combined_resources_before | length > 0 # Salva o arquivo apenas se encontrar recursos
+
+# Capturar estado de recursos a nível de cluster (ClusterOperators, MCPs, Nodes) - já é feito em outras tasks,
+# mas pode ser duplicado aqui para o snapshot completo, ou garantir que as variáveis globais são salvas.
+# Exemplo:
+- name: "CAPTURE STATE (BEFORE): Get ClusterOperators state"
+  kubernetes.core.k8s_info:
+    kind: ClusterOperator
+    api_version: config.openshift.io/v1
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_auth_results['openshift_auth']['api_key'] }}"
+    verify_ssl: false
+  register: pre_upgrade_clusteroperators
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (BEFORE): Save ClusterOperators state to file"
+  ansible.builtin.copy:
+    content: "{{ pre_upgrade_clusteroperators.resources | to_nice_yaml }}"
+    dest: "{{ shared_path }}/snapshots/{{ cluster_name }}/before/clusteroperators.yaml"
+    mode: '0644'
+  delegate_to: "{{ groups['bastion'][0] if groups['bastion'] is defined else 'localhost' }}"
+
+- name: "CAPTURE STATE (BEFORE): Get MachineConfigPools state"
+  kubernetes.core.k8s_info:
+    kind: MachineConfigPool
+    api_version: machineconfiguration.openshift.io/v1
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_auth_results['openshift_auth']['api_key'] }}"
+    verify_ssl: false
+  register: pre_upgrade_mcps
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (BEFORE): Save MachineConfigPools state to file"
+  ansible.builtin.copy:
+    content: "{{ pre_upgrade_mcps.resources | to_nice_yaml }}"
+    dest: "{{ shared_path }}/snapshots/{{ cluster_name }}/before/machineconfigpools.yaml"
+    mode: '0644'
+  delegate_to: "{{ groups['bastion'][0] if groups['bastion'] is defined else 'localhost' }}"
+
+- name: "CAPTURE STATE (BEFORE): Get Nodes state"
+  kubernetes.core.k8s_info:
+    kind: Node
+    api_version: v1
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_auth_results['openshift_auth']['api_key'] }}"
+    verify_ssl: false
+  register: pre_upgrade_nodes
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (BEFORE): Save Nodes state to file"
+  ansible.builtin.copy:
+    content: "{{ pre_upgrade_nodes.resources | to_nice_yaml }}"
+    dest: "{{ shared_path }}/snapshots/{{ cluster_name }}/before/nodes.yaml"
+    mode: '0644'
+  delegate_to: "{{ groups['bastion'][0] if groups['bastion'] is defined else 'localhost' }}"
+
+
+ * automacoes/upgrade-diff/roles/health_check_upgrade/tasks/main.yml (Modificado - Incluir nova task)
+---
+- name: Authenticating to the Openshift cluster
+  redhat.openshift.openshift_auth:
+    host: "{{ openshift_api_url }}"
+    username: "{{ cluster_user }}"
+    password: "{{ cluster_pass }}"
+    validate_certs: false
+  register: openshift_auth_results
+  delegate_to: localhost
+
+- name: Include task to capture pre-upgrade state
+  ansible.builtin.include_tasks: capture_pre_upgrade_state.yml
+
+- name: Check info nodes
+  ansible.builtin.include_tasks: check_nodes.yml
+  # ... (manter as tasks existentes)
+
+2. Role health_check_pos_upgrade (Adicionar Snapshot "Depois")
+ * automacoes/upgrade-diff/roles/health_check_pos_upgrade/tasks/capture_post_upgrade_state.yml (Novo arquivo)
+---
+- name: "CAPTURE STATE (AFTER): Ensure snapshots directory exists for {{ cluster_name }}"
+  ansible.builtin.file:
+    path: "{{ shared_path }}/snapshots/{{ cluster_name }}/after"
+    state: directory
+    mode: '0755'
+  delegate_to: "{{ groups['bastion'][0] if groups['bastion'] is defined else 'localhost' }}" # Exemplo: delegar para o primeiro host no grupo 'bastion' ou localhost
+
+- name: "CAPTURE STATE (AFTER): Get user-defined namespaces"
+  kubernetes.core.k8s_info:
+    kind: Namespace
+    api_version: v1
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_auth_results['openshift_auth']['api_key'] }}"
+    verify_ssl: false
+  register: all_namespaces_res
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (AFTER): Filter out system namespaces"
+  set_fact:
+    user_namespaces: >-
+      {{ all_namespaces_res.resources
+         | map(attribute='metadata')
+         | selectattr('name', 'search', '^(?!kube-|openshift-).*') # Exclui namespaces que começam com kube- ou openshift-
+         | map(attribute='name') | list }}
+  delegate_to: localhost # Pode ser delegado ou não
+
+- name: "CAPTURE STATE (AFTER): Define list of resource types to capture"
+  set_fact:
+    resources_to_snapshot:
+      - kind: Deployment
+        api_version: apps/v1
+      - kind: StatefulSet
+        api_version: apps/v1
+      - kind: DaemonSet
+        api_version: apps/v1
+      - kind: Service
+        api_version: v1
+      - kind: Route
+        api_version: route.openshift.io/v1
+      - kind: HorizontalPodAutoscaler
+        api_version: autoscaling/v2 # ou v1 dependendo da versão do OCP base
+      - kind: ImageStream # Específico do OpenShift
+        api_version: image.openshift.io/v1
+      # Adicione outros tipos relevantes conforme necessário (mesmos que no snapshot BEFORE)
+      # - kind: ConfigMap
+      #   api_version: v1
+      # - kind: Secret # Cuidado com dados sensíveis em snapshots!
+      #   api_version: v1
+      # - kind: PersistentVolumeClaim
+      #   api_version: v1
+      # - kind: PersistentVolume
+      #   api_version: v1
+      # - kind: NetworkPolicy
+      #   api_version: networking.k8s.io/v1
+      # - kind: Role
+      #   api_version: rbac.authorization.k8s.io/v1
+      # - kind: RoleBinding
+      #   api_version: rbac.authorization.k8s.io/v1
+      # - kind: ServiceAccount
+      #   api_version: v1
+  delegate_to: localhost
+
+
+- name: "CAPTURE STATE (AFTER): Capture and save state for each resource type in user namespaces"
+  loop: "{{ resources_to_snapshot }}"
+  loop_control:
+    loop_var: resource_item
+  block:
+    - name: "CAPTURE STATE (AFTER): Get {{ resource_item.kind }} state"
+      kubernetes.core.k8s_info:
+        kind: "{{ resource_item.kind }}"
+        api_version: "{{ resource_item.api_version }}"
+        host: "{{ openshift_api_url }}"
+        api_key: "{{ openshift_auth_results['openshift_auth']['api_key'] }}"
+        verify_ssl: false
+        namespace: "{{ user_namespace }}" # Iterar por namespaces de usuário
+      register: resource_state_after
+      loop: "{{ user_namespaces }}"
+      loop_control:
+        loop_var: user_namespace
+      delegate_to: localhost
+
+    - name: "CAPTURE STATE (AFTER): Combine {{ resource_item.kind }} resources from all user namespaces"
+      set_fact:
+        combined_resources_after: "{{ resource_state_after.results | map(attribute='resources') | flatten }}"
+      delegate_to: localhost
+
+
+    - name: "CAPTURE STATE (AFTER): Save {{ resource_item.kind }} state to file"
+      ansible.builtin.copy:
+        content: "{{ combined_resources_after | to_nice_yaml }}"
+        dest: "{{ shared_path }}/snapshots/{{ cluster_name }}/after/{{ resource_item.kind | lower }}s.yaml" # Nome do arquivo no plural e minusculo
+        mode: '0644'
+      delegate_to: "{{ groups['bastion'][0] if groups['bastation'] is defined else 'localhost' }}"
+      when: combined_resources_after | length > 0 # Salva o arquivo apenas se encontrar recursos
+
+# Capturar estado de recursos a nível de cluster (ClusterOperators, MCPs, Nodes) - já é feito em outras tasks,
+# mas pode ser duplicado aqui para o snapshot completo, ou garantir que as variáveis globais são salvas.
+# Exemplo:
+- name: "CAPTURE STATE (AFTER): Get ClusterOperators state"
+  kubernetes.core.k8s_info:
+    kind: ClusterOperator
+    api_version: config.openshift.io/v1
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_auth_results['openshift_auth']['api_key'] }}"
+    verify_ssl: false
+  register: post_upgrade_clusteroperators
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (AFTER): Save ClusterOperators state to file"
+  ansible.builtin.copy:
+    content: "{{ post_upgrade_clusteroperators.resources | to_nice_yaml }}"
+    dest: "{{ shared_path }}/snapshots/{{ cluster_name }}/after/clusteroperators.yaml"
+    mode: '0644'
+  delegate_to: "{{ groups['bastion'][0] if groups['bastion'] is defined else 'localhost' }}"
+
+- name: "CAPTURE STATE (AFTER): Get MachineConfigPools state"
+  kubernetes.core.k8s_info:
+    kind: MachineConfigPool
+    api_version: machineconfiguration.openshift.io/v1
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_auth_results['openshift_auth']['api_key'] }}"
+    verify_ssl: false
+  register: post_upgrade_mcps
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (AFTER): Save MachineConfigPools state to file"
+  ansible.builtin.copy:
+    content: "{{ post_upgrade_mcps.resources | to_nice_yaml }}"
+    dest: "{{ shared_path }}/snapshots/{{ cluster_name }}/after/machineconfigpools.yaml"
+    mode: '0644'
+  delegate_to: "{{ groups['bastion'][0] if groups['bastion'] is defined else 'localhost' }}"
+
+- name: "CAPTURE STATE (AFTER): Get Nodes state"
+  kubernetes.core.k8s_info:
+    kind: Node
+    api_version: v1
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ openshift_auth_results['openshift_auth']['api_key'] }}"
+    verify_ssl: false
+  register: post_upgrade_nodes
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (AFTER): Save Nodes state to file"
+  ansible.builtin.copy:
+    content: "{{ post_upgrade_nodes.resources | to_nice_yaml }}"
+    dest: "{{ shared_path }}/snapshots/{{ cluster_name }}/after/nodes.yaml"
+    mode: '0644'
+  delegate_to: "{{ groups['bastion'][0] if groups['bastion'] is defined else 'localhost' }}"
+
+
+ * automacoes/upgrade-diff/roles/health_check_pos_upgrade/tasks/main.yml (Modificado - Incluir nova task)
+---
+- name: Authenticating to the Openshift cluster
+  redhat.openshift.openshift_auth:
+    host:  "{{ openshift_api_url }}"
+    username: "{{ cluster_user }}"
+    password: "{{ cluster_pass }}"
+    validate_certs: false
+  register: openshift_auth_results
+  delegate_to: localhost
+
+- name: Include task to capture post-upgrade state
+  ansible.builtin.include_tasks: capture_post_upgrade_state.yml
+
+- name: Return PDBs
+  ansible.builtin.include_tasks: return_pdbs.yml
+  # ... (manter as tarefas existentes)
+
+3. Nova Role in_place_state_comparator
+ * automacoes/upgrade-diff/roles/in_place_state_comparator/tasks/main.yml (Novo arquivo)
+---
+- name: "COMPARATOR: Define paths for snapshots"
+  set_fact:
+    before_snapshot_path: "{{ shared_path }}/snapshots/{{ cluster_name }}/before"
+    after_snapshot_path: "{{ shared_path }}/snapshots/{{ cluster_name }}/after"
+
+- name: "COMPARATOR: Initialize differences structure"
+  set_fact:
+    comparison_results: {}
+
+- name: "COMPARATOR: List resource types to compare and their file names"
+  set_fact:
+    resources_to_compare:
+      - name: deployments
+        kind: Deployment
+        api_version: apps/v1
+      - name: statefulsets
+        kind: StatefulSet
+        api_version: apps/v1
+      - name: daemonsets
+        kind: DaemonSet
+        api_version: apps/v1
+      - name: services
+        kind: Service
+        api_version: v1
+      - name: routes
+        kind: Route
+        api_version: route.openshift.io/v1
+      - name: hpas
+        kind: HorizontalPodAutoscaler
+        api_version: autoscaling/v2
+      - name: clusteroperators
+        kind: ClusterOperator
+        api_version: config.openshift.io/v1
+      - name: machineconfigpools
+        kind: MachineConfigPool
+        api_version: machineconfiguration.openshift.io/v1
+      - name: nodes
+        kind: Node
+        api_version: v1
+      # Adicionar outros tipos conforme capturado e necessário para comparação
+
+- name: "COMPARATOR: Process and compare each resource type"
+  ansible.builtin.include_tasks: compare_resources.yml
+  loop: "{{ resources_to_compare }}"
+  loop_control:
+    loop_var: resource_info # Passa info completa do recurso para o include
+
+- name: "COMPARATOR: Check for Pod inconsistencies (based on health_check_pods logic)"
+  # Assume que a variável 'pods_problematicos_pre' e 'pods_problematicos_pos' foram salvas/carregadas
+  # em roles anteriores e são acessíveis aqui, talvez passadas como extra_vars ou via shared_path
+  # Se não forem acessíveis, você precisaria refazer a lógica de checagem de pods aqui ou carregar os arquivos salvos.
+  # Exemplo simplificado:
+  set_fact:
+    pod_inconsistencies: []
+
+- name: "COMPARATOR: Compare problematic pods list"
+  set_fact:
+    pods_only_pre: "{{ pods_problematicos_pre | default([]) | difference(pods_problematicos_pos | default([]), 'name', 'namespace') }}"
+    pods_only_pos: "{{ pods_problematicos_pos | default([]) | difference(pods_problematicos_pre | default([]), 'name', 'namespace') }}"
+
+- name: "COMPARATOR: Add pod inconsistencies to results"
+  set_fact:
+    comparison_results: >-
+      {{ comparison_results | combine({('Pod:' ~ item.namespace ~ '/' ~ item.name): {'name': item.name, 'namespace': item.namespace, 'type': 'Pod', 'differences': ['PROBLEMA ANTES, RESOLVIDO DEPOIS?']}}) }}
+  loop: "{{ pods_only_pre }}"
+  when: pods_only_pre | length > 0
+
+- name: "COMPARATOR: Add new pod problems to results"
+  set_fact:
+    comparison_results: >-
+      {{ comparison_results | combine({('Pod:' ~ item.namespace ~ '/' ~ item.name): {'name': item.name, 'namespace': item.namespace, 'type': 'Pod', 'differences': ['PROBLEMA DEPOIS, NÃO EXISTIA ANTES! Fase: ' ~ item.phase | default('N/A')]}}) }}
+  loop: "{{ pods_only_pos }}"
+  when: pods_only_pos | length > 0
+
+
+- name: "COMPARATOR: Debug final comparison results"
+  debug:
+    var: comparison_results
+
+- name: "COMPARATOR: Fail the task if critical inconsistencies are found"
+  # Adapte a lógica de falha com base nos tipos de diferença que você considera críticos
+  ansible.builtin.fail:
+    msg: "Inconsistências críticas encontradas após o upgrade. Verifique o relatório de comparação."
+  when: comparison_results | length > 0 # Exemplo: falha se *qualquer* diferença for encontrada.
+        # Lógica mais complexa pode ser necessária, ex: 'Pod' in comparison_results or specific Operator degraded
+
+- name: "COMPARATOR: Include task to generate the report"
+  ansible.builtin.include_tasks: generate_report.yml
+
+ * automacoes/upgrade-diff/roles/in_place_state_comparator/tasks/compare_resources.yml (Novo arquivo)
+---
+# Esta task é incluída para cada item em resources_to_compare
+
+- name: "COMPARATOR: Load {{ resource_info.kind }} snapshot - BEFORE"
+  ansible.builtin.slurp:
+    src: "{{ before_snapshot_path }}/{{ resource_info.name }}.yaml"
+  register: before_raw
+  ignore_errors: true
+  delegate_to: "{{ groups['bastion'][0] if groups['bastion'] is defined else 'localhost' }}"
+
+- name: "COMPARATOR: Load {
