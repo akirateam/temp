@@ -1,0 +1,374 @@
+Compreendido! Vamos consolidar todo o processo de upgrade In-Place em massa para clusters ARO importados no ACM, focando em torná-lo operacional e executável, com a coleta de dados via ACM Search, armazenamento em bucket Azure Blob, diff e o link para o relatório HTML no Grafana.
+Remover delegate_to completamente para tarefas que interagem com APIs remotas (kubernetes.core.k8s*) faria o Ansible tentar executá-las no host alvo do play (o nome do managed cluster do inventário ACM). Isso não funciona, pois o Execution Environment (EE) é que tem as coleções e a conectividade de saída para as APIs. A prática comum em automação centralizada (como no AAP) é rodar essas tarefas no EE e especificar o host/kubeconfig alvo. O delegate_to: localhost é frequentemente usado explicitamente para reforçar que a tarefa roda localmente no EE (que é o localhost a partir da perspectiva da tarefa).
+Vou manter delegate_to: localhost para as tasks que precisam rodar no Execution Environment para acessar APIs (ACM Hub, Managed Clusters APIs via URL/credenciais do inventário) ou módulos específicos de cloud/linguagem. Para operações de arquivo que agora vão para o bucket, o módulo do Azure Blob gerencia a conexão e não precisa de delegate_to para um bastion.
+Aqui está o código completo, passo a passo, integrando as melhorias:
+Estrutura de Pastas Final:
+automacoes/upgrade-diff/
+├── roles/
+│   ├── acm_search_util/
+│   │   ├── tasks/
+│   │   │   └── main.yml
+│   │   └── (...) # meta, defaults, vars, README
+│   ├── health_check_pos_upgrade/
+│   │   ├── tasks/
+│   │   │   ├── capture_post_upgrade_state.yml # MODIFICADO
+│   │   │   ├── check_nodes_pos.yml # MODIFICADO
+│   │   │   ├── check_clusters_operators_pos.yml # MODIFICADO
+│   │   │   ├── check_mcps_pos.yml # MODIFICADO
+│   │   │   ├── check_pods_pos.yml # MODIFICADO
+│   │   │   ├── check_pv_and_pvc_pos.yml # MODIFICADO
+│   │   │   └── main.yml # MODIFICADO
+│   │   └── (...) # defaults, handlers, meta, vars, README, return_pdbs.yml, return_mcps.yml, report_pos.yml
+│   ├── health_check_upgrade/
+│   │   ├── tasks/
+│   │   │   ├── capture_pre_upgrade_state.yml # MODIFICADO
+│   │   │   ├── check_nodes.yml # MODIFICADO
+│   │   │   ├── check_clusters_operators.yml # MODIFICADO
+│   │   │   ├── check_mcps.yml # MODIFICADO
+│   │   │   ├── check_pods.yml # MODIFICADO
+│   │   │   ├── check_pv_and_pvc.yml # MODIFICADO
+│   │   │   └── main.yml # MODIFICADO
+│   │   └── (...) # defaults, handlers, meta, vars, README, check_deprecated_apis.yml, backup_etcd.yml, create_report.yml, files (remover se backup_etcd mudar)
+│   ├── in_place_state_comparator/
+│   │   ├── tasks/
+│   │   │   ├── main.yml
+│   │   │   ├── compare_resources.yml
+│   │   │   └── generate_report.yml
+│   │   ├── templates/
+│   │   │   └── report.j2 # APRIMORADO
+│   │   └── (...) # defaults, meta, vars, README
+│   ├── must_gather/
+│   │   ├── tasks/
+│   │   │   ├── collecting_must_gather.yml # MODIFICADO
+│   │   │   ├── upload_must_gather.yml # MODIFICADO
+│   │   │   └── main.yml # MODIFICADO
+│   │   └── (...) # defaults, meta, vars, README, cluster_logging.yml, cleaning_logs.yml, check_nodes.yml (duplicado, talvez remover)
+│   ├── upgrade_aro/
+│   │   ├── tasks/
+│   │   │   └── main.yml # Lógica principal para upgrade ARO
+│   │   └── (...) # defaults, handlers, meta, vars, README, template (upgrade-config.yml.j2)
+│   └── (...) # Outras roles como diff_checker_ocp (remover se não usadas no workflow final), mirror_images, upgrade_disconnected_ocp (remover se não usadas)
+├── playbooks/
+│   ├── playbook-upgrade-in-place-mass.yml # NOVO PLAYBOOK principal orquestrador
+│   └── (...) # Outros playbooks se ainda relevantes (must-gather, cancel-upgrade, etc.)
+├── acm_inventory.py # Mantido
+└── README.md # Modificado para descrever o fluxo completo
+
+Ajustes de Variáveis e Credenciais:
+ * Variáveis Globais: As variáveis de conexão com o ACM Hub (acm_hub_url, acm_user, acm_pass) e Azure Blob (azure_storage_account_name, azure_storage_container_name, azure_storage_key) devem ser definidas no nível do Playbook principal (playbook-upgrade-in-place-mass.yml) ou via Survey/Extra Vars no AAP, e passadas para as roles que precisam delas. Use o Vault do AAP para credenciais sensíveis!
+ * Credenciais do Managed Cluster: O inventário dinâmico (acm_inventory.py) já fornece openshift_api_url, cluster_user, cluster_pass por host. As roles que interagem diretamente com a API do managed cluster (como upgrade_aro) as usarão automaticamente com o kubernetes.core.k8s* módulos quando o play rodar no host alvo (ou usando delegate_to: localhost e passando o host e api_key/token manualmente). Manteremos o padrão de delegate_to: localhost e passar host/api_key explicitamente, pois é mais explícito sobre onde a tarefa está rodando.
+Código Completo (Partes Chave Modificadas/Novas):
+Devido ao volume, vou fornecer os códigos completos para as roles acm_search_util, in_place_state_comparator e as tasks modificadas nas roles health_check_upgrade, health_check_pos_upgrade e must_gather. Os arquivos não listados aqui devem ser mantidos como estão nos seus uploads, a menos que explicitamente removidos da estrutura de pastas sugerida.
+1. Role: acm_search_util
+ * roles/acm_search_util/tasks/main.yml
+---
+# Role to perform queries against Red Hat ACM Search API using oc command
+# Assumes acm_hub_url, acm_user, acm_pass are provided as variables to the role call
+# Assumes search_query and optional target_cluster_name are provided to the role call
+
+- name: "ACM SEARCH UTIL: Authenticate to ACM Hub"
+  # Prefer authentication via kubeconfig if possible, otherwise use openshift_auth
+  # This task runs on the Execution Environment (localhost)
+  redhat.openshift.openshift_auth:
+    host: "{{ acm_hub_url }}"
+    username: "{{ acm_user }}"
+    password: "{{ acm_pass }}"
+    validate_certs: no # Ajuste se tiver certificados válidos e verificados no EE
+  register: acm_hub_auth_results
+  delegate_to: localhost
+
+- name: "ACM SEARCH UTIL: Build oc search command"
+  vars:
+    # Adiciona filtro de cluster se target_cluster_name for fornecido
+    full_search_query: "{{ search_query }}{{ ' cluster=' ~ target_cluster_name if target_cluster_name is defined and target_cluster_name != '' else '' }}"
+    # Usa o token obtido na autenticação. Assegura que o oc use o token e ignore certs se validate_certs for no
+    oc_search_cmd: "oc --server={{ acm_hub_url }} --token={{ acm_hub_auth_results['openshift_auth']['api_key'] }} {{ '--insecure-skip-tls-verify=true' if acm_hub_auth_results['openshift_auth']['validate_certs'] == false else '' }} search {{ full_search_query }} -o json"
+  ansible.builtin.set_fact:
+    oc_search_command: "{{ oc_search_cmd }}"
+  delegate_to: localhost
+
+- name: "ACM SEARCH UTIL: Execute oc search query on the hub"
+  ansible.builtin.shell: "{{ oc_search_command }}"
+  register: search_results_raw
+  changed_when: false
+  delegate_to: localhost
+
+- name: "ACM SEARCH UTIL: Parse Search results"
+  ansible.builtin.set_fact:
+    # A API Search retorna uma lista de itens. O .items pode não existir se não encontrar nada.
+    acm_search_results: "{{ (search_results_raw.stdout | from_json).get('items', []) }}"
+  delegate_to: localhost
+
+# A variável acm_search_results agora contém a lista de recursos encontrados.
+
+ * roles/acm_search_util/meta/main.yml
+galaxy_info:
+  author: Your Name
+  description: Role to perform queries against Red Hat ACM Search API via oc command
+  company: Your Company
+
+  license: license (GPL-2.0-or-later, MIT, etc)
+
+  min_ansible_version: 2.12
+
+  galaxy_tags:
+    - kubernetes
+    - openshift
+    - acm
+    - search
+
+dependencies:
+  - name: openshift.redhat
+    version: "*" # Use a versão adequada
+  - name: kubernetes.core
+    version: "*" # Use a versão adequada
+
+
+ * roles/acm_search_util/defaults/main.yml (Exemplo, usar Vault no AAP)
+---
+# Default ACM Hub connection details - OVERRIDE THESE SECURELY
+acm_hub_url: "https://api.your-acm-hub.example.com:6443" # Substitua pela URL real do seu Hub ACM
+acm_user: "acm_admin_user" # Usuário com permissão de Search no Hub
+acm_pass: "acm_admin_password" # Senha do usuário (USE VAULT)
+
+# Default search query - SHOULD BE OVERRIDDEN BY ROLE CALL
+search_query: "kind=ManagedCluster"
+
+# Default target cluster name - SHOULD BE OVERRIDDEN BY ROLE CALL
+target_cluster_name: ""
+
+ * roles/acm_search_util/vars/main.yml (Vazio ou com variáveis não sensíveis)
+---
+# Non-sensitive variables for acm_search_util role
+
+ * roles/acm_search_util/README.md (Manter conforme exemplo anterior)
+2. Modificação das Roles health_check_upgrade e health_check_pos_upgrade
+ * Adicionar variáveis Azure Blob nos defaults/vars da role: (Em roles/health_check_upgrade/defaults/main.yml e roles/health_check_pos_upgrade/defaults/main.yml)
+# ... outras variáveis da role
+
+# Azure Blob Storage Configuration - OVERRIDE THESE SECURELY
+azure_storage_account_name: "seusuanomedeconta" # Substitua
+azure_storage_container_name: "seucontainerdesnapshots" # Substitua
+azure_storage_key: "suachaveouSAS" # Substitua (USE VAULT)
+
+# ... outras variáveis
+
+ * Modificar roles/health_check_upgrade/tasks/capture_pre_upgrade_state.yml (Usando acm_search_util e Azure Blob)
+---
+# Assume acm_hub_url, acm_user, acm_pass, cluster_name,
+# azure_storage_account_name, azure_storage_container_name, azure_storage_key são fornecidos.
+
+- name: "CAPTURE STATE (BEFORE): Define list of resource types to capture via ACM Search"
+  set_fact:
+    resources_to_snapshot_search:
+      - name: deployments
+        search_query: "kind=Deployment"
+      - name: statefulsets
+        search_query: "kind=StatefulSet"
+      - name: daemonsets
+        search_query: "kind=DaemonSet"
+      - name: services
+        search_query: "kind=Service"
+      - name: routes
+        search_query: "kind=Route apiVersion=route.openshift.io/v1"
+      - name: hpas
+        search_query: "kind=HorizontalPodAutoscaler" # Verifique apiVersion correta
+      - name: clusteroperators
+        search_query: "kind=ClusterOperator apiVersion=config.openshift.io/v1"
+      - name: machineconfigpools
+        search_query: "kind=MachineConfigPool apiVersion=machineconfiguration.openshift.io/v1"
+      - name: nodes
+        search_query: "kind=Node apiVersion=v1"
+      # Adicionar outros tipos relevantes
+      - name: configmaps
+        search_query: "kind=ConfigMap apiVersion=v1"
+      # CUIDADO com Secrets - pode expor dados sensíveis no bucket
+      # - name: secrets
+      #   search_query: "kind=Secret apiVersion=v1"
+      - name: pvcs
+        search_query: "kind=PersistentVolumeClaim apiVersion=v1"
+      - name: pvs
+        search_query: "kind=PersistentVolume apiVersion=v1"
+
+- name: "CAPTURE STATE (BEFORE): Capture and upload state for each resource type via ACM Search to Azure Blob"
+  loop: "{{ resources_to_snapshot_search }}"
+  loop_control:
+    loop_var: resource_item
+  block:
+    - name: "CAPTURE STATE (BEFORE): Get {{ resource_item.kind }} state via ACM Search"
+      ansible.builtin.include_role:
+        name: acm_search_util
+      vars:
+        acm_hub_url: "{{ acm_hub_url }}"
+        acm_user: "{{ acm_user }}"
+        acm_pass: "{{ acm_pass }}"
+        search_query: "{{ resource_item.search_query }}"
+        target_cluster_name: "{{ cluster_name }}" # Filtra busca para o cluster atual no loop do playbook principal
+      register: resource_state_before_search
+      # Roda no Execution Environment (default)
+
+    - name: "CAPTURE STATE (BEFORE): Upload {{ resource_item.kind }} state to Azure Blob"
+      azure.azcollection.azure_blob:
+        account_name: "{{ azure_storage_account_name }}"
+        container_name: "{{ azure_storage_container_name }}"
+        blob: "{{ cluster_name }}/before/{{ resource_item.name }}.yaml" # Caminho no bucket: <cluster_name>/before/<resource_name>.yaml
+        src: "{{ resource_state_before_search.ansible_facts.acm_search_results | to_nice_yaml }}" # Conteúdo da pesquisa (lista de itens)
+        state: present
+        mode: upload
+        storage_account_key: "{{ azure_storage_key }}" # Use Vault!
+      when: resource_state_before_search.ansible_facts.acm_search_results | length > 0 # Upload apenas se encontrar recursos
+      # Roda no Execution Environment (default)
+
+# Pods problemáticos: ACM Search pode retornar a fase, mas detalhes internos (restart count, termination reason) podem não estar lá.
+# Manter checagem de pods problemáticos baseada em ACM Search, talvez com menos granularidade se necessário.
+- name: "CAPTURE STATE (BEFORE): Get Pods state via ACM Search to find problematic ones"
+  ansible.builtin.include_role:
+    name: acm_search_util
+  vars:
+    acm_hub_url: "{{ acm_hub_url }}"
+    acm_user: "{{ acm_user }}"
+    acm_pass: "{{ acm_pass }}"
+    search_query: "kind=Pod" # Obter todos os pods
+    target_cluster_name: "{{ cluster_name }}"
+  register: all_pods_from_search
+  # Roda no Execution Environment (default)
+
+- name: "CAPTURE STATE (BEFORE): Filter problematic pods from search results"
+  set_fact:
+    # Filtrar por fases problemáticas conhecidas
+    pods_problematicos_pre: >-
+      {{
+        all_pods_from_search.ansible_facts.acm_search_results
+        | selectattr('status.phase', 'in', ['Failed', 'Pending', 'Unknown'])
+        | list
+      }}
+  # Roda no Execution Environment (default)
+
+- name: "CAPTURE STATE (BEFORE): Save problematic pods list to Azure Blob"
+  azure.azcollection.azure_blob:
+    account_name: "{{ azure_storage_account_name }}"
+    container_name: "{{ azure_storage_container_name }}"
+    blob: "{{ cluster_name }}/before/problematic_pods.yaml"
+    src: "{{ pods_problematicos_pre | to_nice_yaml }}"
+    state: present
+    mode: upload
+    storage_account_key: "{{ azure_storage_key }}" # Use Vault!
+  when: pods_problematicos_pre | length > 0
+  # Roda no Execution Environment (default)
+
+ * roles/health_check_upgrade/tasks/main.yml (Modificado - Incluir nova task de captura, remover old checks se duplicados, manter checks que usam dados complexos ou falham)
+---
+# Assume acm_hub_url, acm_user, acm_pass, cluster_name,
+# azure_storage_account_name, azure_storage_container_name, azure_storage_key são fornecidos.
+# Assume openshift_api_url, cluster_user, cluster_pass (managed cluster creds) também são fornecidos pelo inventário/AAP
+
+- name: Authenticating to the Managed Openshift cluster (for direct checks/actions)
+  # A autenticação é necessária para tasks que interagem DIRETAMENTE com a API do managed cluster
+  redhat.openshift.openshift_auth:
+    host: "{{ openshift_api_url }}" # URL da API do managed cluster (do inventário)
+    username: "{{ cluster_user }}" # Credenciais do managed cluster (do inventário)
+    password: "{{ cluster_pass }}" # USE VAULT para a senha
+    validate_certs: false # Ajuste conforme necessário
+  register: openshift_auth_results
+  delegate_to: localhost # Roda no Execution Environment
+
+
+- name: Include task to capture pre-upgrade state via ACM Search and save to Blob
+  ansible.builtin.include_tasks: capture_pre_upgrade_state.yml
+
+# Mantenha os checks abaixo, mas MODIFIQUE CADA UM para usar a ROLE `acm_search_util` para OBTENÇÃO DE DADOS
+# onde o ACM Search expõe as informações necessárias. Se o Search não expor o detalhe,
+# mantenha a task original usando openshift_auth_results e k8s_info/k8s_info, mas rodando em delegate_to: localhost
+
+- name: Check info nodes
+  ansible.builtin.include_tasks: check_nodes.yml # MODIFICAR ESTA TASK
+
+- name: Check info MCPs
+  ansible.builtin.include_tasks: check_mcps.yml # MODIFICAR ESTA TASK
+
+- name: Check info Cluster Operators
+  ansible.builtin.include_tasks: check_clusters_operators.yml # MODIFICAR ESTA TASK
+
+- name: Check info PDBs (requires direct K8s API access)
+  ansible.builtin.include_tasks: check_pdbs.yml # MANTER, usa k8s_info com openshift_auth_results
+
+- name: Check info PODs (check_pods.yml original fazia filtro básico, agora usamos Search para a lista, mas filtro mais granular talvez precise de k8s_info ou logs)
+  ansible.builtin.include_tasks: check_pods.yml # MODIFICAR PARA USAR SEARCH PRIMEIRO, refinar filtro
+
+- name: Check info PVs and PVCs (can use Search)
+  ansible.builtin.include_tasks: check_pv_and_pvc.yml # MODIFICAR ESTA TASK
+
+- name: Check deprecated APIs (requires direct K8s API access via oc)
+  ansible.builtin.include_tasks: check_deprecated_apis.yml # MANTER, usa shell oc login + oc get diretamente no managed cluster via EE
+
+- name: Create backup ETCD (requires direct K8s API access - Jobs, SA, RBAC)
+  # ARO Managed ETCD backup is not user triggered. This task is likely for non-ARO.
+  # If clusters are ARO, this task is probably conditional (when cluster_type != 'aro').
+  # If needed for non-ARO, MANTER, usa k8s com openshift_auth_results
+  ansible.builtin.include_tasks: backup_etcd.yml
+  when: cluster_type != "aro" # Manter esta condição se aplicável
+
+- name: Create report (pré-upgrade summary)
+  # Este relatório pode ser uma soma dos resultados dos checks acima.
+  # O relatório DEPARA detalhado será gerado PÓS-UPGRADE.
+  ansible.builtin.include_tasks: create_report.yml
+
+# Certifique-se de que as tasks check_*.yml modificadas populam variáveis (ex: node_check_status, co_check_status)
+# que a task create_report.yml utiliza.
+
+ * Modificar roles/health_check_pos_upgrade/tasks/capture_post_upgrade_state.yml (Usando acm_search_util e Azure Blob) - Código já fornecido acima na seção 2.
+ * Modificar roles/health_check_pos_upgrade/tasks/main.yml (Incluir task de captura, remover old checks se duplicados, manter checks que usam dados complexos ou falham, incluir chamada para o comparador)
+---
+# Assume acm_hub_url, acm_user, acm_pass, cluster_name,
+# azure_storage_account_name, azure_storage_container_name, azure_storage_key são fornecidos.
+# Assume openshift_api_url, cluster_user, cluster_pass (managed cluster creds) também são fornecidos pelo inventário/AAP
+
+- name: Authenticating to the Managed Openshift cluster (for direct checks/actions)
+  # A autenticação é necessária para tasks que interagem DIRETAMENTE com a API do managed cluster
+  redhat.openshift.openshift_auth:
+    host:  "{{ openshift_api_url }}" # URL da API do managed cluster (do inventário)
+    username: "{{ cluster_user }}" # Credenciais do managed cluster (do inventário)
+    password: "{{ cluster_pass }}" # USE VAULT
+    validate_certs: false # Ajuste
+  register: openshift_auth_results
+  delegate_to: localhost
+
+- name: Include task to capture post-upgrade state via ACM Search and save to Blob
+  ansible.builtin.include_tasks: capture_post_upgrade_state.yml
+
+# Mantenha os checks abaixo, mas MODIFIQUE CADA UM para usar a ROLE `acm_search_util`
+# Similar aos checks pré-upgrade.
+
+- name: Check Nodes (pós)
+  ansible.builtin.include_tasks: check_nodes_pos.yml # MODIFICAR ESTA TASK
+
+- name: Check Clusters Operators (pós)
+  ansible.builtin.include_tasks: check_clusters_operators_pos.yml # MODIFICAR ESTA TASK
+
+- name: Check MCPs (pós)
+  ansible.builtin.include_tasks: check_mcps_pos.yml # MODIFICAR ESTA TASK
+
+- name: Check Pods (pós)
+  ansible.builtin.include_tasks: check_pods_pos.yml # MODIFICAR ESTA TASK (Filtrar problemáticos, talvez usando Search)
+
+- name: Check PVs e PVCs (pós)
+  ansible.builtin.include_tasks: check_pv_and_pvc_pos.yml # MODIFICAR ESTA TASK
+
+- name: Return PDBs (requires direct K8s API access)
+  # MANTER, usa k8s com openshift_auth_results
+  ansible.builtin.include_tasks: return_pdbs.yml
+
+- name: Resume mcps (requires direct K8s API access)
+  # MANTER, usa k8s com openshift_auth_results
+  ansible.builtin.include_tasks: return_mcps.yml
+
+# ** NOVO PASSO: CHAMAR O COMPARADOR DE ESTADO **
+# Assume que pods_problematicos_pre e pods_problematicos_pos foram salvos/carregados via blob storage
+- name: Include task to compare before/after snapshots and generate report
+  ansible.builtin.include_role:
+    name: in_place_state_comparator # Chama a nova role de comparação
+  vars:
+    cluster_name: "{{ cluster_name }}"
+    azure_storage_account_name: "{{ azure_storage_account_name }}"
+    azure_storage_container_name: "{{ azure_storage_container_name }}"
+   
