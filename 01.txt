@@ -1,8 +1,8 @@
-Certo, vamos começar do zero no diretório `aro-upgrade` e adicionar um teste em cada passo para validar o que foi feito.
+Compreendido. Vamos começar do zero no diretório `aro-upgrade` e adicionar o teste ao final de cada passo.
 
 **Passo 1: Estrutura Inicial, Role `acm_search_util` e Playbook de Teste**
 
-Neste passo, criaremos a estrutura base do projeto Ansible, a role `acm_search_util` e um playbook simples para testar se a role está funcionando corretamente e se o ambiente está configurado para interagir com o ACM Hub.
+Neste passo, criaremos a estrutura base do projeto Ansible, a role `acm_search_util` para interagir com o ACM Search API (usando `oc search`) e um playbook simples para validar sua funcionalidade e a comunicação com seu ACM Hub.
 
 1.  Crie o diretório base do seu projeto e a estrutura inicial das roles:
 
@@ -12,7 +12,7 @@ Neste passo, criaremos a estrutura base do projeto Ansible, a role `acm_search_u
     mkdir -p roles/acm_search_util/{tasks,meta,defaults,vars}
     ```
 
-2.  Crie os arquivos da role `acm_search_util` com o conteúdo que definimos no passo anterior (já aprimorado com filtro de ambiente):
+2.  Crie os arquivos da role `acm_search_util`:
 
       * `aro-upgrade/roles/acm_search_util/tasks/main.yml`:
 
@@ -41,7 +41,7 @@ Neste passo, criaremos a estrutura base do projeto Ansible, a role `acm_search_u
         - name: "ACM SEARCH UTIL: Build search query string with filters"
           vars:
             # Start with the base query (e.g., kind=ManagedCluster Infrastructure.Cloud=Azure)
-            query_string: "{{ search_query_base | default('kind=ManagedCluster Infrastructure.Cloud=Azure') }}" # Usar default se não for passado
+            query_string: "{{ search_query_base | default('kind=ManagedCluster Infrastructure.Cloud=Azure') }}"
             # Add cluster filter if target_cluster_name is provided
             query_with_cluster: "{{ query_string }}{{ ' cluster=' ~ target_cluster_name if target_cluster_name is defined and target_cluster_name != '' else '' }}"
             # Add environment label filter if provided
@@ -66,15 +66,13 @@ Neste passo, criaremos a estrutura base do projeto Ansible, a role `acm_search_u
 
         - name: "ACM SEARCH UTIL: Parse Search results"
           ansible.builtin.set_fact:
-            # The Search API returns a list of items under 'items'. Get an empty list if no items found.
             acm_search_results: "{{ (search_results_raw.stdout | from_json).get('items', []) }}"
           delegate_to: localhost
 
-        # The variable `acm_search_results` is now available in the playbook that included this role,
-        # containing the list of resources found by the search query.
+        # The variable `acm_search_results` is now available in the playbook that included this role.
         ```
 
-      * `aro-upgrade/roles/acm_search_util/meta/main.yml`: (Conteúdo igual ao do passo anterior)
+      * `aro-upgrade/roles/acm_search_util/meta/main.yml`:
 
         ```yaml
         galaxy_info:
@@ -100,7 +98,7 @@ Neste passo, criaremos a estrutura base do projeto Ansible, a role `acm_search_u
 
         ```
 
-      * `aro-upgrade/roles/acm_search_util/defaults/main.yml`: (Conteúdo igual ao do passo anterior)
+      * `aro-upgrade/roles/acm_search_util/defaults/main.yml`:
 
         ```yaml
         ---
@@ -119,14 +117,14 @@ Neste passo, criaremos a estrutura base do projeto Ansible, a role `acm_search_u
         environment_label_filter: "" # Ex: ambiente=dv ou ambiente=ho
         ```
 
-      * `aro-upgrade/roles/acm_search_util/vars/main.yml`: (Vazio)
+      * `aro-upgrade/roles/acm_search_util/vars/main.yml`:
 
         ```yaml
         ---
         # Non-sensitive variables for acm_search_util role.
         ```
 
-      * `aro-upgrade/roles/acm_search_util/README.md`: (Conteúdo igual ao do passo anterior)
+      * `aro-upgrade/roles/acm_search_util/README.md`:
 
         ````markdown
         # acm_search_util Role
@@ -188,50 +186,60 @@ Neste passo, criaremos a estrutura base do projeto Ansible, a role `acm_search_u
         
         ```
 
-3.  Crie um playbook simples na raiz do diretório `aro-upgrade` para testar a role `acm_search_util`:
+3.  Crie um playbook simples na raiz do diretório `aro-upgrade` para testar a role `acm_search_util`. Este playbook incluirá as variáveis sensíveis (com placeholders para Vault) e demonstrará o uso do filtro por ambiente.
 
       * `aro-upgrade/test_acm_search.yml`:
         ```yaml
         ---
-        - name: Test ACM Search Util Role
-          hosts: localhost # Rodar no Execution Environment
+        - name: Test ACM Search Util Role and Environment Filter
+          hosts: localhost # Rodar no Execution Environment (onde o 'oc' está)
           gather_facts: false
 
           vars:
-            # Configure these variables with your ACM Hub details for testing
-            # In a real AAP workflow, these would come from secured credentials/survey
+            # !!! CONFIGURE SUAS CREDENCIAIS ACM AQUI (USANDO VAULT PARA SENHAS) !!!
+            # Exemplo de como definir variáveis sensíveis (USE VAULT PARA acm_pass!)
             test_acm_hub_url: "YOUR_ACM_HUB_URL" # <<<<< SUBSTITUA PELA URL DO SEU ACM HUB
             test_acm_user: "YOUR_ACM_USER"     # <<<<< SUBSTITUA PELO SEU USUÁRIO ACM
-            test_acm_pass: "YOUR_ACM_PASSWORD" # <<<<< SUBSTITUA PELA SUA SENHA ACM (IDEALMENTE USE VAULT)
+            # test_acm_pass: "YOUR_ACM_PASSWORD" # <<<<< SUBSTITUA PELA SUA SENHA ACM E COLOQUE NO VAULT
 
-            # Configure environment for testing
-            test_environment: "dv" # <<<<< SUBSTITUA POR 'dv' ou 'ho' para testar o filtro
+            # Variável para a senha (carregada do vault)
+            # Exemplo: Defina 'test_acm_pass' no vault file e carregue aqui
+            # Ex: ansible-vault create group_vars/all/vault.yml
+            # Conteúdo: test_acm_pass: 'SUA_SENHA_REAL'
+            # Então no playbook: vars: { test_acm_pass: "{{ vault_acm_password }}" } # Nome da var no vault
+
+            # --- Configuração para Teste ---
+            test_environment: "ho" # <<<<< SUBSTITUA POR 'dv' ou 'ho' para testar o filtro
+            # O filtro de Infrastructure.Cloud=Azure já está no defaults/main.yml da role
 
           tasks:
             - name: Include ACM Search Util role to find Managed Clusters by Environment
               ansible.builtin.include_role:
-                name: acm_search_util
+                name: acm_search_util # Assumindo que a role está em ./roles
               vars:
                 acm_hub_url: "{{ test_acm_hub_url }}"
                 acm_user: "{{ test_acm_user }}"
-                acm_pass: "{{ test_acm_pass }}"
-                # search_query_base defaultará para "kind=ManagedCluster Infrastructure.Cloud=Azure"
-                environment_label_filter: "ambiente={{ test_environment }}" # Usa a variável de teste
+                # Carregar a senha do vault. O nome exato da variável no vault depende de como você a salvou.
+                # Exemplo: se você salvou como 'acm_admin_password' no vault
+                acm_pass: "{{ lookup('ansible.builtin.env', 'TEST_ACM_PASS_VAULT_PASSWORD') | ansible.builtin.vault_lookup('vault_acm_admin_password') }}" # Exemplo usando lookup no vault (Adapte!)
+                # Ou, se a senha está diretamente em um vault file carregado
+                # acm_pass: "{{ test_acm_pass }}" # Assumindo que test_acm_pass já veio do vault
 
+                # search_query_base defaultará para "kind=ManagedCluster Infrastructure.Cloud=Azure"
+                environment_label_filter: "ambiente={{ test_environment }}" # Usa a variável de teste para filtrar por label
 
             - name: Debug the list of ARO clusters found in the specified environment
               ansible.builtin.debug:
-                msg: "Encontrados {{ acm_search_results | length }} clusters ARO no ambiente '{{ test_environment }}': {{ acm_search_results | map(attribute='name') }}"
+                msg: "Encontrados {{ acm_search_results | length }} clusters ARO no ambiente '{{ test_environment }}': {{ acm_search_results | map(attribute='name') | default([]) }}"
               # A variável 'acm_search_results' é populada pela role incluída.
 
-            - name: Assert that at least one cluster was found (basic check)
+            - name: Assert that at least one cluster was found in the environment
               ansible.builtin.assert:
                 that:
                   - acm_search_results is defined
                   - acm_search_results is not none
                   - acm_search_results | length > 0
                 fail_msg: "Nenhum cluster ARO encontrado no ambiente '{{ test_environment }}' com a query: {{ acm_search_results_raw.ansible_facts.final_search_query }}" # Acessa a query final da role para debug
-
 
             - name: Include ACM Search Util role to find Deployments in the first found cluster
               # Testa a funcionalidade de filtrar por cluster específico
@@ -240,42 +248,53 @@ Neste passo, criaremos a estrutura base do projeto Ansible, a role `acm_search_u
               vars:
                 acm_hub_url: "{{ test_acm_hub_url }}"
                 acm_user: "{{ test_acm_user }}"
-                acm_pass: "{{ test_acm_pass }}"
+                 # Carregar a senha do vault (adapte)
+                acm_pass: "{{ lookup('ansible.builtin.env', 'TEST_ACM_PASS_VAULT_PASSWORD') | ansible.builtin.vault_lookup('vault_acm_admin_password') }}" # Exemplo (Adapte!)
+                # acm_pass: "{{ test_acm_pass }}" # Assumindo que test_acm_pass já veio do vault
+
                 search_query: "kind=Deployment apiVersion=apps/v1" # Sobrescreve a query base para buscar Deployments
-                target_cluster_name: "{{ acm_search_results[0].name }}" # Usa o nome do primeiro cluster encontrado no passo anterior
+                # Use o nome do primeiro cluster encontrado (se houver)
+                target_cluster_name: "{{ acm_search_results[0].name if acm_search_results | length > 0 else '' }}"
+                # environment_label_filter não é necessário aqui se filtrar por cluster name é suficiente
 
             - name: Debug Deployments found in the first cluster
               ansible.builtin.debug:
-                msg: "Deployments encontrados no cluster '{{ acm_search_results[0].name }}': {{ acm_search_results | map(attribute='name') }}"
+                msg: "Deployments encontrados no cluster '{{ acm_search_results_raw.ansible_facts.final_search_query | split('cluster=') | last | split(' ')[0] }}': {{ acm_search_results | map(attribute='name') | default([]) }}" # Extrair nome do cluster da query final para debug
 
-            - name: Assert that Deployments were found (basic check)
+            - name: Assert that Deployments query did not fail
               ansible.builtin.assert:
                 that:
                   - acm_search_results is defined
                   - acm_search_results is not none
-                  - acm_search_results | length >= 0 # Pode haver 0 deployments, mas a query não deve falhar
+                  # Pode haver 0 deployments, mas a query não deve falhar.
+                  # Verificar se search_results_raw foi bem sucedido.
+                  - acm_search_results_raw is success
                 success_msg: "Teste de busca de Deployments concluído com sucesso."
         ```
 
-4.  **Execute o Playbook de Teste:**
+4.  **Configure o Vault e Execute o Teste:**
 
       * Instale as coleções necessárias se ainda não o fez:
         ```bash
         ansible-galaxy collection install openshift.redhat kubernetes.core azure.azcollection
         ```
-      * **Substitua os placeholders no `test_acm_search.yml`** (`YOUR_ACM_HUB_URL`, `YOUR_ACM_USER`, `YOUR_ACM_PASSWORD`) pelos detalhes do seu ACM Hub. **Considere usar Ansible Vault para a senha\!**
-      * Execute o playbook a partir do diretório `aro-upgrade`:
+      * **Configure o Ansible Vault:** Crie um arquivo vault para armazenar suas senhas sensíveis (senha do usuário ACM, chave do Azure Storage Account).
         ```bash
-        ansible-playbook test_acm_search.yml
+        ansible-vault create vault.yml
+        # Digite e confirme sua senha mestra do vault.
+        # Dentro do editor, adicione suas variáveis:
+        # acm_admin_password: SuaSenhaACMReal
+        # azure_storage_key: SuaChaveAzureReal
+        ```
+      * **Substitua os placeholders no `test_acm_search.yml`** (`YOUR_ACM_HUB_URL`, `YOUR_ACM_USER`) e ajuste a lógica de carregamento da senha do vault para corresponder ao nome da variável que você usou no `vault.yml`. A forma `lookup('ansible.builtin.env', 'TEST_ACM_PASS_VAULT_PASSWORD') | ansible.builtin.vault_lookup('vault_acm_admin_password')` é um exemplo de como usar uma variável de ambiente para a senha do vault e carregar uma variável específica do vault.
+      * Execute o playbook, fornecendo a senha do vault (via linha de comando, variável de ambiente ou arquivo):
+        ```bash
+        ansible-playbook test_acm_search.yml --ask-vault-pass
+        # ou usando variável de ambiente:
+        # export ANSIBLE_VAULT_PASSWORD="sua_senha_do_vault"
+        # ansible-playbook test_acm_search.yml
         ```
 
-Este teste executará a role `acm_search_util` duas vezes: primeiro para encontrar todos os clusters ARO em um ambiente específico (`dv` ou `ho`) usando a label `ambiente`, e depois para encontrar Deployments no primeiro cluster retornado. A saída do debug e os asserts mostrarão se a role funcionou e se o ACM Hub foi acessado corretamente.
+Este teste verificará se a role `acm_search_util` consegue autenticar no ACM Hub e executar consultas filtradas por Infrastructure/Cloud (que está no default) e pela label `ambiente`. Ele também testa a busca de um tipo de recurso específico em um único cluster encontrado. A saída do debug mostrará os clusters encontrados e, se tudo funcionar, o teste não falhará nos asserts.
 
-Se o teste falhar, verifique:
-
-  * Seus detalhes de conexão com o ACM Hub no `test_acm_search.yml`.
-  * Se o usuário ACM tem permissões para usar o ACM Search e ver os clusters gerenciados.
-  * Se o comando `oc` está instalado e acessível no ambiente onde o Ansible está rodando.
-  * Se a sintaxe da query (`Infrastructure.Cloud=Azure`, `ambiente=...`) corresponde à forma como seus clusters são representados no ACM Search.
-
-Este é o primeiro passo funcional e testável. Com a role `acm_search_util` validada, podemos prosseguir para a role `health_check_upgrade`.
+Este é o primeiro passo funcional e testável, com considerações de segurança para dados sensíveis desde o início. Com a role `acm_search_util` validada, podemos prosseguir para a role `health_check_upgrade`.
