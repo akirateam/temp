@@ -1,0 +1,53 @@
+---
+# Role to perform queries against Red Hat ACM Search API using oc command
+# This role requires the 'oc' binary to be installed and configured in the Execution Environment.
+# It assumes ACM Hub connection details (acm_hub_url, acm_user, acm_pass) are provided as variables to the role call.
+# It assumes the search query base (search_query_base), optional target cluster name (target_cluster_name),
+# and optional environment label filter (environment_label_filter) are provided.
+# The tasks run on the Execution Environment (localhost).
+
+- name: "ACM SEARCH UTIL: Authenticate to ACM Hub"
+  ansible.builtin.debug:
+    msg: "Authenticating to ACM Hub: {{ acm_hub_url }}"
+
+- name: "ACM SEARCH UTIL: Perform Authentication"
+  redhat.openshift.openshift_auth:
+    host: "{{ acm_hub_url }}"
+    username: "{{ acm_user }}"
+    password: "{{ acm_pass }}"
+    validate_certs: no # Ajuste para 'yes' se seus certificados forem confiáveis no EE
+  register: acm_hub_auth_results
+  delegate_to: localhost
+
+- name: "ACM SEARCH UTIL: Build search query string with filters"
+  vars:
+    # Start with the base query (e.g., kind=ManagedCluster Infrastructure.Cloud=Azure)
+    query_string: "{{ search_query_base | default('kind=ManagedCluster Infrastructure.Cloud=Azure') }}"
+    # Add cluster filter if target_cluster_name is provided
+    query_with_cluster: "{{ query_string }}{{ ' cluster=' ~ target_cluster_name if target_cluster_name is defined and target_cluster_name != '' else '' }}"
+    # Add environment label filter if provided
+    query_with_environment: "{{ query_with_cluster }}{{ ' ' ~ environment_label_filter if environment_label_filter is defined and environment_label_filter != '' else '' }}"
+  ansible.builtin.set_fact:
+    final_search_query: "{{ query_with_environment }}"
+  delegate_to: localhost
+
+- name: "ACM SEARCH UTIL: Build oc search command"
+  vars:
+    # Use the token from the authentication result. Ensure oc uses the token and skips certs if needed.
+    oc_search_cmd: "oc --server={{ acm_hub_url }} --token={{ acm_hub_auth_results['openshift_auth']['api_key'] }} {{ '--insecure-skip-tls-verify=true' if acm_hub_auth_results['openshift_auth']['validate_certs'] == false else '' }} search '{{ final_search_query | replace(\"'\", \"'\\''\") }}' -o json" # Usar replace para escapar aspas simples na query
+  ansible.builtin.set_fact:
+    oc_search_command: "{{ oc_search_cmd }}"
+  delegate_to: localhost
+
+- name: "ACM SEARCH UTIL: Execute oc search query on the hub"
+  ansible.builtin.shell: "{{ oc_search_command }}"
+  register: search_results_raw
+  changed_when: false
+  delegate_to: localhost
+
+- name: "ACM SEARCH UTIL: Parse Search results"
+  ansible.builtin.set_fact:
+    acm_search_results: "{{ (search_results_raw.stdout | from_json).get('items', []) }}"
+  delegate_to: localhost
+
+# The variable `acm_search_results` is now available in the playbook that included this role.
