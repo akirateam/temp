@@ -1,0 +1,306 @@
+Excelente\! Vamos detalhar cada passo com o código e as configurações necessárias, incorporando as melhorias discutidas. Vou estruturar isso em "Steps", cada um com seus objetivos, código e um pequeno "template de teste" (playbook) para validar aquela etapa específica.
+
+**Estrutura do Projeto Ansible (Recomendada)**
+
+Antes de começarmos, certifique-se de que seu repositório Git para os playbooks Ansible siga uma estrutura organizada. Com base no que você já tem e nas melhores práticas, sugiro algo assim:
+
+```
+aro-upgrade/
+├── inventory/
+│   └── acm_inventory.py           # Seu script de inventário dinâmico (com melhorias)
+│
+├── group_vars/
+│   └── all/
+│       ├── main.yml               # Variáveis globais (ex: nomes de containers Azure Blob)
+│       └── vault.yml              # Variáveis sensíveis encriptadas (ou referências ao Key Vault)
+│
+├── roles/
+│   ├── common/                    # Tarefas comuns, autenticação OpenShift
+│   │   └── tasks/
+│   │       └── main.yml
+│   ├── redhat_support/            # Criação de case e comentários na Red Hat
+│   │   └── tasks/
+│   │       └── main.yml
+│   ├── must_gather/               # Coleta de must-gather e upload para Azure Blob
+│   │   └── tasks/
+│   │       └── main.yml
+│   ├── aro_pre_checks/            # Health checks pré-upgrade
+│   │   └── tasks/
+│   │       └── main.yml
+│   ├── aro_upgrade_mup/           # Lógica de upgrade via Managed Upgrade Operator
+│   │   └── tasks/
+│   │       └── main.yml
+│   ├── aro_post_checks/           # Health checks pós-upgrade
+│   │   └── tasks/
+│   │       └── main.yml
+│   ├── reporting/                 # Geração e upload de relatórios para Azure Blob
+│   │   ├── tasks/
+│   │   │   └── main.yml
+│   │   └── templates/
+│   │       └── upgrade_report_template.j2
+│   └── aro_cancel_upgrade/        # Sua role para cancelar o UpgradeConfig
+│       └── tasks/
+│           └── main.yml
+│
+├── playbooks/                     # Playbooks principais que serão chamados pelos Job Templates no AAP
+│   ├── 00_sync_inventory.yml
+│   ├── 01_pre_upgrade_tasks.yml   # Chama redhat_support, must_gather
+│   ├── 02_health_check_pre.yml    # Chama aro_pre_checks
+│   ├── 03_execute_upgrade_aro.yml # Chama aro_upgrade_mup
+│   ├── 04_health_check_pos.yml    # Chama aro_post_checks
+│   ├── 05_generate_report.yml     # Chama reporting
+│   ├── utility_cancel_upgrade.yml # Chama aro_cancel_upgrade
+│
+├── templates_teste/               # Playbooks para testar cada role individualmente
+│   ├── test_common_auth.yml
+│   ├── test_redhat_support.yml
+│   ├── test_must_gather.yml
+│   ├── test_aro_pre_checks.yml
+│   ├── test_aro_upgrade_mup.yml
+│   ├── test_aro_post_checks.yml
+│   ├── test_reporting.yml
+│   └── test_cancel_upgrade.yml
+│
+└── README.md                      # Seu README, atualizado com os novos passos/configs
+```
+
+-----
+
+## Step 0: Configuração Inicial no Azure
+
+Este passo envolve a criação dos recursos no Azure que serão utilizados pela automação.
+
+**Objetivo:**
+
+  * Criar e configurar Azure Key Vault para armazenar segredos.
+  * Criar e configurar Azure Blob Storage para artefatos.
+  * Criar um Service Principal (SP) no Azure com permissões para acessar o Key Vault e o Blob Storage.
+
+**Ações e Configurações:**
+
+1.  **Criar Service Principal (SP):**
+
+      * Use a Azure CLI:
+        ```bash
+        az ad sp create-for-rbac --name "aap-aro-automation-sp" --role Contributor --scopes /subscriptions/SUA_SUBSCRIPTION_ID
+        ```
+      * Anote o `appId` (client ID), `password` (client secret) e `tenant` (tenant ID). **Guarde bem o `password`, pois ele não será mostrado novamente.**
+
+2.  **Criar Azure Key Vault:**
+
+      * Use a Azure CLI:
+        ```bash
+        az keyvault create --name "SeuKVNomeUnico" --resource-group "SeuResourceGroup" --location "EastUS" # Ou sua região
+        ```
+      * **Conceder Permissões ao SP para acessar o Key Vault:**
+        ```bash
+        az keyvault set-policy --name "SeuKVNomeUnico" --resource-group "SeuResourceGroup" --spn "APP_ID_DO_SEU_SP" --secret-permissions get list
+        ```
+      * **Conceder Permissões ao seu usuário (ou ao Managed Identity do AAP, se aplicável) para gerenciar segredos (set):**
+        ```bash
+        # Para seu usuário Azure CLI logado
+        az keyvault set-policy --name "SeuKVNomeUnico" --resource-group "SeuResourceGroup" --object-id $(az ad signed-in-user show --query id -o tsv) --secret-permissions get list set delete
+
+        # Se o AAP tiver uma Managed Identity:
+        # AAP_MANAGED_IDENTITY_OBJ_ID=$(az ad sp show --id "AAP_MANAGED_IDENTITY_APP_ID_OU_NOME" --query id -o tsv)
+        # az keyvault set-policy --name "SeuKVNomeUnico" --resource-group "SeuResourceGroup" --object-id $AAP_MANAGED_IDENTITY_OBJ_ID --secret-permissions get list
+        ```
+
+3.  **Adicionar Segredos ao Key Vault:**
+
+      * Use a Azure CLI ou o Portal do Azure:
+        ```bash
+        az keyvault secret set --vault-name "SeuKVNomeUnico" --name "ansible-cluster-user" --value "SEU_USUARIO_OCP"
+        az keyvault secret set --vault-name "SeuKVNomeUnico" --name "ansible-cluster-pass" --value "SUA_SENHA_OCP"
+        az keyvault secret set --vault-name "SeuKVNomeUnico" --name "redhat-offline-token" --value "SEU_OFFLINE_TOKEN_REDHAT"
+        az keyvault secret set --vault-name "SeuKVNomeUnico" --name "azure-client-id" --value "APP_ID_DO_SEU_SP"
+        az keyvault secret set --vault-name "SeuKVNomeUnico" --name "azure-client-secret" --value "SENHA_DO_SEU_SP"
+        az keyvault secret set --vault-name "SeuKVNomeUnico" --name "azure-tenant-id" --value "TENANT_ID_DO_SEU_SP"
+        az keyvault secret set --vault-name "SeuKVNomeUnico" --name "azure-subscription-id" --value "SUA_SUBSCRIPTION_ID"
+        ```
+
+4.  **Criar Azure Blob Storage:**
+
+      * Crie uma Storage Account:
+        ```bash
+        az storage account create --name "seustorageaccountnomunico" --resource-group "SeuResourceGroup" --location "EastUS" --sku Standard_LRS
+        ```
+      * Obtenha a Connection String (será usada para configurar o acesso do Ansible se não usar o SP diretamente com RBAC para data plane):
+        ```bash
+        az storage account show-connection-string --name "seustorageaccountnomunico" --resource-group "SeuResourceGroup" -o tsv
+        ```
+        *Guarde essa connection string no Key Vault também, se preferir este método de autenticação para o Blob.*
+        ```bash
+        az keyvault secret set --vault-name "SeuKVNomeUnico" --name "azure-blob-connection-string" --value "SUA_CONNECTION_STRING"
+        ```
+      * Crie os Contêineres:
+        ```bash
+        az storage container create --account-name "seustorageaccountnomunico" --name "must-gather-logs" --auth-mode login # Ou use connection-string
+        az storage container create --account-name "seustorageaccountnomunico" --name "upgrade-reports" --auth-mode login
+        az storage container create --account-name "seustorageaccountnomunico" --name "cluster-backups" --auth-mode login
+        ```
+      * **Conceder Permissões ao SP para o Data Plane do Blob Storage (Recomendado):**
+        Em vez de usar a connection string, atribua a role `Storage Blob Data Contributor` ao seu Service Principal no escopo da Storage Account.
+        ```bash
+        STORAGE_ACCOUNT_ID=$(az storage account show --name "seustorageaccountnomunico" --resource-group "SeuResourceGroup" --query id -o tsv)
+        az role assignment create --assignee "APP_ID_DO_SEU_SP" --role "Storage Blob Data Contributor" --scope $STORAGE_ACCOUNT_ID
+        ```
+
+**Template de Teste (Verificação Manual/Azure Portal):**
+
+  * Acesse o Key Vault no Portal do Azure e verifique se os segredos foram criados.
+  * Acesse a Storage Account no Portal do Azure e verifique se os contêineres existem.
+  * Verifique as Access Policies no Key Vault e as Role Assignments na Storage Account para o Service Principal.
+
+-----
+
+## Step 1: Configuração de Credenciais e Projeto no AAP
+
+Este passo foca em configurar o AAP para interagir com os recursos Azure e o código Ansible.
+
+**Objetivo:**
+
+  * Configurar credenciais no AAP para Azure (usando o SP), Key Vault (para buscar outros segredos) e OpenShift.
+  * Configurar o Projeto Ansible no AAP.
+
+**Ações e Configurações no AAP Web UI:**
+
+1.  **Credencial para Azure Key Vault (para AAP buscar segredos):**
+
+      * Vá em `Resources > Credentials > Add`.
+      * **Name:** `Azure Key Vault Access`
+      * **Organization:** Sua organização.
+      * **Credential Type:** `Azure Key Vault`
+      * **AZURE KEY VAULT URL:** `https://SeuKVNomeUnico.vault.azure.net/`
+      * **AUTHENTICATION TYPE:** `Azure AD Service Principal`
+      * **CLIENT ID:** `APP_ID_DO_SEU_SP` (O SP que tem permissão `get/list` no Key Vault)
+      * **CLIENT SECRET:** `SENHA_DO_SEU_SP`
+      * **TENANT ID:** `TENANT_ID_DO_SEU_SP`
+      * Salve.
+
+2.  **Credencial do Azure (Service Principal para Ansible usar):**
+
+      * Vá em `Resources > Credentials > Add`.
+      * **Name:** `Azure Cloud SP`
+      * **Organization:** Sua organização.
+      * **Credential Type:** `Microsoft Azure Resource Manager`
+      * **SUBSCRIPTION ID:** (Selecione `Inject as environment variables`) e no campo abaixo: `{{ azure_subscription_id }}` ou use o lookup do Key Vault: `{{ lookup('azure_key_vault_secret', 'azure-subscription-id', vault_url='https://SeuKVNomeUnico.vault.azure.net/') }}`. *Alternativamente, preencha diretamente se não usar lookup aqui.*
+      * **CLIENT ID:** `{{ lookup('azure_key_vault_secret', 'azure-client-id', vault_url='https://SeuKVNomeUnico.vault.azure.net/') }}`
+      * **CLIENT SECRET:** `{{ lookup('azure_key_vault_secret', 'azure-client-secret', vault_url='https://SeuKVNomeUnico.vault.azure.net/') }}`
+      * **TENANT ID:** `{{ lookup('azure_key_vault_secret', 'azure-tenant-id', vault_url='https://SeuKVNomeUnico.vault.azure.net/') }}`
+      * **CLOUD ENVIRONMENT:** `AzureCloud` (ou o apropriado)
+      * Salve.
+      * *Nota: Para que os lookups `azure_key_vault_secret` funcionem diretamente na definição da credencial, o AAP precisa ter a credencial "Azure Key Vault Access" configurada como uma credencial de "lookup" global ou associada ao tipo de credencial "Microsoft Azure Resource Manager". Uma forma mais simples é deixar que os playbooks busquem esses valores usando o lookup do Ansible, e a credencial aqui só precisa existir para ser associada ao Job Template. Ou, se o AAP suportar diretamente, configure os campos com os valores buscados do KV.*
+      * *A forma mais garantida é que o EE usado pelos playbooks tenha as variáveis de ambiente `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` populadas (ex: pela própria credencial do AAP ou o EE pode ser construído com elas se forem fixas).*
+
+3.  **Credencial OpenShift (Customizada - como no seu README):**
+
+      * Tipo de Credencial `OCP Auth Basic` (já definido no seu README).
+          * Input Configuration:
+            ```yaml
+            fields:
+              - id: username_ocp
+                type: string
+                label: Username Cluster OCP
+                help_text: "OpenShift cluster username"
+              - id: password_ocp
+                type: string
+                label: Password Cluster OCP
+                secret: true
+                help_text: "OpenShift cluster password"
+            required:
+              - username_ocp
+              - password_ocp
+            ```
+          * Injector Configuration:
+            ```yaml
+            env:
+              K8S_AUTH_USERNAME: "{{ username_ocp }}"
+              K8S_AUTH_PASSWORD: "{{ password_ocp }}"
+            extra_vars:
+              cluster_user: "{{ username_ocp }}"
+              cluster_pass: "{{ password_ocp }}"
+            ```
+      * Crie a Credencial:
+          * **Name:** `OpenShift Cluster Admin`
+          * **Credential Type:** `OCP Auth Basic`
+          * **Username Cluster OCP:** `{{ lookup('azure_key_vault_secret', 'ansible-cluster-user', vault_url='https://SeuKVNomeUnico.vault.azure.net/') }}`
+          * **Password Cluster OCP:** `{{ lookup('azure_key_vault_secret', 'ansible-cluster-pass', vault_url='https://SeuKVNomeUnico.vault.azure.net/') }}`
+          * *Nota: O AAP precisa ser capaz de resolver esses lookups ao popular a credencial, o que geralmente acontece se a Credencial de Acesso ao KV estiver bem configurada e associada. Se isso não funcionar diretamente na UI da credencial, você pode precisar passar esses lookups como extra\_vars no Job Template.*
+
+4.  **Credencial Red Hat Offline Token:**
+
+      * Crie um novo **Credential Type** (se ainda não tiver um genérico para tokens):
+          * **Name:** `Generic Token Credential`
+          * Input Configuration:
+            ```yaml
+            fields:
+              - id: token
+                type: string
+                label: API Token
+                secret: true
+            required:
+              - token
+            ```
+          * Injector Configuration:
+            ```yaml
+            env:
+              GENERIC_API_TOKEN: "{{ token }}"
+            extra_vars:
+              api_token: "{{ token }}"
+            ```
+      * Crie a Credencial:
+          * **Name:** `Red Hat Offline Token`
+          * **Credential Type:** `Generic Token Credential`
+          * **API Token:** `{{ lookup('azure_key_vault_secret', 'redhat-offline-token', vault_url='https://SeuKVNomeUnico.vault.azure.net/') }}`
+
+5.  **Projeto Ansible:**
+
+      * Vá em `Resources > Projects > Add`.
+      * **Name:** `ARO Upgrade Automation`
+      * **Organization:** Sua organização.
+      * **SCM TYPE:** `Git`
+      * **SCM URL:** URL do seu repositório Git.
+      * **SCM BRANCH/TAG/COMMIT:** `main` (ou sua branch de desenvolvimento).
+      * **SCM CREDENTIAL:** Sua credencial do Git (criada conforme seu README).
+      * **OPTIONS:** Marque `Clean`, `Delete`, `Update Revision on Launch`.
+      * Salve e clique em "Sync Project".
+
+**Template de Teste:**
+
+  * Crie um Job Template simples no AAP:
+      * **Name:** `Test Key Vault Lookup`
+      * **Inventory:** Um inventário qualquer com `localhost`.
+      * **Project:** `ARO Upgrade Automation`
+      * **Playbook:** Crie um playbook simples no seu repositório, ex: `playbooks/test_kv.yml`:
+        ```yaml
+        ---
+        - name: Test Azure Key Vault Lookup
+          hosts: localhost
+          gather_facts: false
+          vars:
+            # Tentar buscar diretamente aqui ou confiar nas credenciais do AAP
+            # Se o lookup na definição da Credencial não funcionou 100%
+            # Este é o local mais confiável para o lookup
+            my_ocp_user: "{{ lookup('azure_key_vault_secret', 'ansible-cluster-user', vault_url='https://SeuKVNomeUnico.vault.azure.net/') }}"
+            rh_token_part: "{{ lookup('azure_key_vault_secret', 'redhat-offline-token', vault_url='https://SeuKVNomeUnico.vault.azure.net/') | community.general.truncate(10, True, '...') }}"
+            azure_sp_client_id: "{{ lookup('azure_key_vault_secret', 'azure-client-id', vault_url='https://SeuKVNomeUnico.vault.azure.net/') }}"
+          tasks:
+            - name: Display OCP username from Key Vault
+              ansible.builtin.debug:
+                msg: "OCP User: {{ my_ocp_user }}"
+
+            - name: Display partial Red Hat token from Key Vault
+              ansible.builtin.debug:
+                msg: "Red Hat Token (partial): {{ rh_token_part }}"
+
+            - name: Display Azure SP Client ID from Key Vault
+              ansible.builtin.debug:
+                msg: "Azure SP Client ID: {{ azure_sp_client_id }}"
+        ```
+      * **Credentials:** Associe a credencial `Azure Key Vault Access`.
+      * Lance o Job Template e verifique se os segredos são impressos corretamente (parcialmente para o token). Isso confirma que o AAP pode acessar o Key Vault.
+
+-----
+
+Continuaremos com os próximos steps em mensagens subsequentes para manter a clareza. O próximo será o Inventário Dinâmico.
