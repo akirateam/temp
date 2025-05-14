@@ -1,0 +1,20 @@
+galaxy_info:
+  author: Your Name
+  description: Role to perform queries against Red Hat ACM Search API via oc command
+  company: Your Company
+
+  license: license (GPL-2.0-or-later, MIT, etc)
+
+  min_ansible_version: 2.12
+
+  galaxy_tags:
+    - kubernetes
+    - openshift
+    - acm
+    - search
+
+dependencies:
+  - name: openshift.redhat
+    version: "*"
+  - name: kubernetes.core
+    version: "*"
