@@ -1,0 +1,31 @@
+---
+- name: Test Survey Variables (v0)
+  hosts: localhost
+  gather_facts: false
+  vars:
+    # Estas vars seriam normalmente preenchidas pelo Survey do AAP
+    # Para teste local, você pode descomentá-las e preenchê-las,
+    # ou configurar 'Extra Variables' no Job Template do AAP.
+
+    # ocp_user_survey: "testuser"
+    # ocp_pass_survey: "testpass"
+    # rh_token_survey: "dummytoken"
+    # base_path_survey: "/tmp/test_artifacts"
+    # azure_client_id_survey: "dummy_azure_client_id"
+
+  tasks:
+    - name: Display OCP Username from Survey/Env
+      ansible.builtin.debug:
+        msg: "OCP User: {{ lookup('env', 'K8S_AUTH_USERNAME') | default(ocp_user_survey, true) | default('NÃO DEFINIDO') }}"
+
+    - name: Display Red Hat Token from Survey/Env
+      ansible.builtin.debug:
+        msg: "Red Hat Token (partial): {{ (lookup('env', 'REDHAT_OFFLINE_TOKEN_ENV') | default(rh_token_survey, true) | default('NÃO DEFINIDO')) | community.general.truncate(10, True, '...') }}"
+
+    - name: Display Base Artifact Path from Survey
+      ansible.builtin.debug:
+        msg: "Base Artifact Path: {{ base_path_survey | default('NÃO DEFINIDO (ex: /opt/ansible_artifacts)') }}"
+
+    - name: Display Azure Client ID from Survey/Env (if used)
+      ansible.builtin.debug:
+        msg: "Azure Client ID: {{ lookup('env', 'AZURE_CLIENT_ID') | default(azure_client_id_survey, true) | default('NÃO DEFINIDO (apenas se az cli for usado)') }}"
