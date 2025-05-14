@@ -15,7 +15,7 @@
     host: "{{ acm_hub_url }}"
     username: "{{ acm_user }}"
     password: "{{ acm_pass }}"
-    validate_certs: no # Ajuste para 'yes' se seus certificados forem confiáveis no EE
+    validate_certs: no # Ajuste para 'yes' se seus certificados forem confiáveis no EE e ACM Hub
   register: acm_hub_auth_results
   delegate_to: localhost
 
@@ -33,8 +33,8 @@
 
 - name: "ACM SEARCH UTIL: Build oc search command"
   vars:
-    # Use the token from the authentication result. Ensure oc uses the token and skips certs if needed.
-    oc_search_cmd: "oc --server={{ acm_hub_url }} --token={{ acm_hub_auth_results['openshift_auth']['api_key'] }} {{ '--insecure-skip-tls-verify=true' if acm_hub_auth_results['openshift_auth']['validate_certs'] == false else '' }} search '{{ final_search_query | replace(\"'\", \"'\\''\") }}' -o json" # Usar replace para escapar aspas simples na query
+    # *** CORRIGIDO: Coloca as opções --server e --token antes de 'search' ***
+    oc_search_cmd: "oc --server={{ acm_hub_url }} {{ '--insecure-skip-tls-verify=true' if acm_hub_auth_results['openshift_auth']['validate_certs'] == false else '' }} --token={{ acm_hub_auth_results['openshift_auth']['api_key'] }} search '{{ final_search_query | replace(\"'\", \"'\\''\") }}' -o json" # Escapa aspas simples
   ansible.builtin.set_fact:
     oc_search_command: "{{ oc_search_cmd }}"
   delegate_to: localhost
