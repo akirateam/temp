@@ -1,205 +1,281 @@
-Com certeza\! Vamos seguir a sua instrução de começar do zero no diretório `aro-upgrade` e focar em utilizar coleções Ansible (quando possível) em vez de comandos `shell` diretos, sempre que a collection OpenShift/Kubernetes ou outras coleções (como a de Azure) oferecerem um módulo equivalente.
+Certo, vamos começar do zero no diretório `aro-upgrade` e adicionar um teste em cada passo para validar o que foi feito.
 
-O ACM Search, infelizmente, não possui um módulo dedicado nas coleções `kubernetes.core` ou `openshift.redhat` para realizar as consultas diretamente via API. A forma mais prática de interagir com o Search API no contexto de um Execution Environment do Ansible é através do comando `oc search`, como fizemos na role `acm_search_util`. Manteremos essa abordagem por ser a mais viável com as ferramentas atuais.
+**Passo 1: Estrutura Inicial, Role `acm_search_util` e Playbook de Teste**
 
-Vamos começar com a estrutura base e a role `acm_search_util` aprimorada com o filtro por ambiente.
+Neste passo, criaremos a estrutura base do projeto Ansible, a role `acm_search_util` e um playbook simples para testar se a role está funcionando corretamente e se o ambiente está configurado para interagir com o ACM Hub.
 
-**Passo 1: Estrutura Inicial e Role `acm_search_util` (Aprimorada)**
+1.  Crie o diretório base do seu projeto e a estrutura inicial das roles:
 
-Crie a seguinte estrutura de pastas dentro do seu diretório `aro-upgrade`:
-
-```bash
-mkdir aro-upgrade
-cd aro-upgrade
-mkdir -p roles/acm_search_util/{tasks,meta,defaults,vars}
-```
-
-Agora, preencha o conteúdo de cada um desses arquivos:
-
-  * **`aro-upgrade/roles/acm_search_util/tasks/main.yml`:**
-
-    ```yaml
-    ---
-    # Role to perform queries against Red Hat ACM Search API using oc command
-    # This role requires the 'oc' binary to be installed and configured in the Execution Environment.
-    # It assumes ACM Hub connection details (acm_hub_url, acm_user, acm_pass) are provided as variables to the role call.
-    # It assumes the search query base (search_query_base), optional target cluster name (target_cluster_name),
-    # and optional environment label filter (environment_label_filter) are provided.
-    # The tasks run on the Execution Environment (localhost).
-
-    - name: "ACM SEARCH UTIL: Authenticate to ACM Hub"
-      ansible.builtin.debug:
-        msg: "Authenticating to ACM Hub: {{ acm_hub_url }}" # Debug para verificar que a task está rodando
-
-    - name: "ACM SEARCH UTIL: Perform Authentication"
-      # Embora a API Search não tenha um módulo, a autenticação pode usar openshift_auth para obter um token
-      redhat.openshift.openshift_auth:
-        host: "{{ acm_hub_url }}"
-        username: "{{ acm_user }}"
-        password: "{{ acm_pass }}"
-        validate_certs: no # Ajuste para 'yes' se seus certificados forem confiáveis no EE
-      register: acm_hub_auth_results
-      delegate_to: localhost # Explicitly run on the Execution Environment
-
-    - name: "ACM SEARCH UTIL: Build search query string with filters"
-      vars:
-        # Start with the base query (e.g., kind=ManagedCluster Infrastructure.Cloud=Azure)
-        query_string: "{{ search_query_base | default('kind=ManagedCluster Infrastructure.Cloud=Azure') }}" # Usar default se não for passado
-        # Add cluster filter if target_cluster_name is provided
-        query_with_cluster: "{{ query_string }}{{ ' cluster=' ~ target_cluster_name if target_cluster_name is defined and target_cluster_name != '' else '' }}"
-        # Add environment label filter if provided
-        query_with_environment: "{{ query_with_cluster }}{{ ' ' ~ environment_label_filter if environment_label_filter is defined and environment_label_filter != '' else '' }}"
-      ansible.builtin.set_fact:
-        final_search_query: "{{ query_with_environment }}"
-      delegate_to: localhost
-
-    - name: "ACM SEARCH UTIL: Build oc search command"
-      vars:
-        # Use the token from the authentication result. Ensure oc uses the token and skips certs if needed.
-        oc_search_cmd: "oc --server={{ acm_hub_url }} --token={{ acm_hub_auth_results['openshift_auth']['api_key'] }} {{ '--insecure-skip-tls-verify=true' if acm_hub_auth_results['openshift_auth']['validate_certs'] == false else '' }} search '{{ final_search_query | replace(\"'\", \"'\\''\") }}' -o json" # Usar replace para escapar aspas simples na query
-      ansible.builtin.set_fact:
-        oc_search_command: "{{ oc_search_cmd }}"
-      delegate_to: localhost
-
-    - name: "ACM SEARCH UTIL: Execute oc search query on the hub"
-      ansible.builtin.shell: "{{ oc_search_command }}"
-      register: search_results_raw
-      changed_when: false # Search does not change the state of the system
-      delegate_to: localhost
-
-    - name: "ACM SEARCH UTIL: Parse Search results"
-      ansible.builtin.set_fact:
-        # The Search API returns a list of items under 'items'. Get an empty list if no items found.
-        acm_search_results: "{{ (search_results_raw.stdout | from_json).get('items', []) }}"
-      delegate_to: localhost
-
-    # The variable `acm_search_results` is now available in the playbook that included this role,
-    # containing the list of resources found by the search query.
+    ```bash
+    mkdir aro-upgrade
+    cd aro-upgrade
+    mkdir -p roles/acm_search_util/{tasks,meta,defaults,vars}
     ```
 
-  * **`aro-upgrade/roles/acm_search_util/meta/main.yml`:**
+2.  Crie os arquivos da role `acm_search_util` com o conteúdo que definimos no passo anterior (já aprimorado com filtro de ambiente):
 
-    ```yaml
-    galaxy_info:
-      author: Your Name
-      description: Role to perform queries against Red Hat ACM Search API via oc command
-      company: Your Company
+      * `aro-upgrade/roles/acm_search_util/tasks/main.yml`:
 
-      license: license (GPL-2.0-or-later, MIT, etc)
+        ```yaml
+        ---
+        # Role to perform queries against Red Hat ACM Search API using oc command
+        # This role requires the 'oc' binary to be installed and configured in the Execution Environment.
+        # It assumes ACM Hub connection details (acm_hub_url, acm_user, acm_pass) are provided as variables to the role call.
+        # It assumes the search query base (search_query_base), optional target cluster name (target_cluster_name),
+        # and optional environment label filter (environment_label_filter) are provided.
+        # The tasks run on the Execution Environment (localhost).
 
-      min_ansible_version: 2.12
+        - name: "ACM SEARCH UTIL: Authenticate to ACM Hub"
+          ansible.builtin.debug:
+            msg: "Authenticating to ACM Hub: {{ acm_hub_url }}"
 
-      galaxy_tags:
-        - kubernetes
-        - openshift
-        - acm
-        - search
+        - name: "ACM SEARCH UTIL: Perform Authentication"
+          redhat.openshift.openshift_auth:
+            host: "{{ acm_hub_url }}"
+            username: "{{ acm_user }}"
+            password: "{{ acm_pass }}"
+            validate_certs: no # Ajuste para 'yes' se seus certificados forem confiáveis no EE
+          register: acm_hub_auth_results
+          delegate_to: localhost
 
-    dependencies:
-      # Specify collections required by this role.
-      # openshift.redhat is needed for openshift_auth.
-      # kubernetes.core might be implicitly needed by openshift_auth? Check documentation.
-      # Or list collections explicitly needed by tasks here if any other than openshift_auth.
-      - name: openshift.redhat
-        version: "*" # Use a versão adequada ou "*" para qualquer
-      - name: kubernetes.core
-        version: "*" # Use a versão adequada ou "*" para qualquer
+        - name: "ACM SEARCH UTIL: Build search query string with filters"
+          vars:
+            # Start with the base query (e.g., kind=ManagedCluster Infrastructure.Cloud=Azure)
+            query_string: "{{ search_query_base | default('kind=ManagedCluster Infrastructure.Cloud=Azure') }}" # Usar default se não for passado
+            # Add cluster filter if target_cluster_name is provided
+            query_with_cluster: "{{ query_string }}{{ ' cluster=' ~ target_cluster_name if target_cluster_name is defined and target_cluster_name != '' else '' }}"
+            # Add environment label filter if provided
+            query_with_environment: "{{ query_with_cluster }}{{ ' ' ~ environment_label_filter if environment_label_filter is defined and environment_label_filter != '' else '' }}"
+          ansible.builtin.set_fact:
+            final_search_query: "{{ query_with_environment }}"
+          delegate_to: localhost
 
-    ```
+        - name: "ACM SEARCH UTIL: Build oc search command"
+          vars:
+            # Use the token from the authentication result. Ensure oc uses the token and skips certs if needed.
+            oc_search_cmd: "oc --server={{ acm_hub_url }} --token={{ acm_hub_auth_results['openshift_auth']['api_key'] }} {{ '--insecure-skip-tls-verify=true' if acm_hub_auth_results['openshift_auth']['validate_certs'] == false else '' }} search '{{ final_search_query | replace(\"'\", \"'\\''\") }}' -o json" # Usar replace para escapar aspas simples na query
+          ansible.builtin.set_fact:
+            oc_search_command: "{{ oc_search_cmd }}"
+          delegate_to: localhost
 
-  * **`aro-upgrade/roles/acm_search_util/defaults/main.yml`:**
+        - name: "ACM SEARCH UTIL: Execute oc search query on the hub"
+          ansible.builtin.shell: "{{ oc_search_command }}"
+          register: search_results_raw
+          changed_when: false
+          delegate_to: localhost
 
-    ```yaml
-    ---
-    # Default ACM Hub connection details - OVERRIDE THESE SECURELY VIA AAP
-    # Estas variáveis devem ser fornecidas pelo Workflow/Survey do AAP ou Extra Vars.
-    # acm_hub_url: "https://api.your-acm-hub.example.com:6443" # SUBSTITUIR COM VALOR SEGURO NO AAP
-    # acm_user: "acm_admin_user" # SUBSTITUIR COM VALOR SEGURO NO AAP
-    # acm_pass: "acm_admin_password" # SUBSTITUIR COM VALOR SEGURO NO AAP - USAR VAULT!!!
+        - name: "ACM SEARCH UTIL: Parse Search results"
+          ansible.builtin.set_fact:
+            # The Search API returns a list of items under 'items'. Get an empty list if no items found.
+            acm_search_results: "{{ (search_results_raw.stdout | from_json).get('items', []) }}"
+          delegate_to: localhost
 
-    # Default search query base - Inclui filtro por Infrastructure/Cloud para focar em ARO
-    # Pode ser sobrescrito ao chamar a role para consultas específicas
-    search_query_base: "kind=ManagedCluster Infrastructure.Cloud=Azure"
+        # The variable `acm_search_results` is now available in the playbook that included this role,
+        # containing the list of resources found by the search query.
+        ```
 
-    # Default target cluster name - Usado para filtrar a busca para um cluster específico
-    # Deve ser fornecido ao chamar a role para o cluster alvo.
-    target_cluster_name: ""
+      * `aro-upgrade/roles/acm_search_util/meta/main.yml`: (Conteúdo igual ao do passo anterior)
 
-    # Default environment label filter - Usado para filtrar por ambiente (dv, ho)
-    # Deve ser fornecido ao chamar a role para filtrar por ambiente.
-    environment_label_filter: "" # Ex: ambiente=dv ou ambiente=ho
-    ```
+        ```yaml
+        galaxy_info:
+          author: Your Name
+          description: Role to perform queries against Red Hat ACM Search API via oc command
+          company: Your Company
 
-  * **`aro-upgrade/roles/acm_search_util/vars/main.yml`:**
+          license: license (GPL-2.0-or-later, MIT, etc)
 
-    ```yaml
-    ---
-    # Non-sensitive variables for acm_search_util role.
-    # Keep this file minimal, sensitive info goes in defaults or vault-encrypted vars.
-    ```
+          min_ansible_version: 2.12
 
-  * **`aro-upgrade/roles/acm_search_util/README.md`:**
+          galaxy_tags:
+            - kubernetes
+            - openshift
+            - acm
+            - search
 
-    ````markdown
-    # acm_search_util Role
+        dependencies:
+          - name: openshift.redhat
+            version: "*"
+          - name: kubernetes.core
+            version: "*"
 
-    This role provides tasks to query the Red Hat ACM Search API using the `oc search` command from within an Ansible Execution Environment. It's designed to be included by other roles or playbooks that need to collect information about managed clusters via the ACM Hub.
+        ```
 
-    **Requirements:**
+      * `aro-upgrade/roles/acm_search_util/defaults/main.yml`: (Conteúdo igual ao do passo anterior)
 
-    * `oc` binary installed and accessible in the Execution Environment's PATH.
-    * Ansible collections: `openshift.redhat`, `kubernetes.core`.
-    * Connectivity from the Execution Environment to the ACM Hub API endpoint.
+        ```yaml
+        ---
+        # Default ACM Hub connection details - OVERRIDE THESE SECURELY VIA AAP
+        # acm_hub_url: "https://api.your-acm-hub.example.com:6443" # SUBSTITUIR COM VALOR SEGURO NO AAP
+        # acm_user: "acm_admin_user" # SUBSTITUIR COM VALOR SEGURO NO AAP
+        # acm_pass: "acm_admin_password" # SUBSTITUIR COM VALOR SEGURO NO AAP - USAR VAULT!!!
 
-    **Role Variables:**
+        # Default search query base - Inclui filtro por Infrastructure/Cloud para focar em ARO
+        search_query_base: "kind=ManagedCluster Infrastructure.Cloud=Azure"
 
-    * `acm_hub_url` (Required): The API URL of the Red Hat Advanced Cluster Management Hub cluster (e.g., `https://api.your-acm-hub.example.com:6443`).
-    * `acm_user` (Required): Username to authenticate with the ACM Hub. This user needs permissions to perform Search queries.
-    * `acm_pass` (Required): Password for the ACM Hub user. **Use Ansible Vault to encrypt this variable in production.**
-    * `search_query_base` (Optional): The base search query string (defaults to `kind=ManagedCluster Infrastructure.Cloud=Azure`). Overwrite for specific resource searches.
-    * `search_query` (Required when overriding base): The full search query string (overrides `search_query_base` if provided).
-    * `target_cluster_name` (Optional): The name of a specific managed cluster to filter search results (e.g., `my-managed-cluster-pr-01a`). If omitted, the search applies across all clusters visible to the ACM user (filtered by `search_query_base`).
-    * `environment_label_filter` (Optional): A label selector string to filter results by environment (e.g., `ambiente=dv`, `ambiente=ho`). Applies in addition to `search_query_base`.
+        # Default target cluster name - Usado para filtrar a busca para um cluster específico
+        target_cluster_name: ""
 
-    **Outputs:**
+        # Default environment label filter - Usado para filtrar por ambiente (dv, ho)
+        environment_label_filter: "" # Ex: ambiente=dv ou ambiente=ho
+        ```
 
-    * `acm_search_results` (Fact): A list of dictionaries, where each dictionary represents a resource found by the `oc search` query in JSON format. This variable is set as an Ansible fact and is available in the playbook that includes this role.
+      * `aro-upgrade/roles/acm_search_util/vars/main.yml`: (Vazio)
 
-    **Example Usage (within another role or playbook):**
+        ```yaml
+        ---
+        # Non-sensitive variables for acm_search_util role.
+        ```
 
-    ```yaml
-    # Example 1: Get all ARO clusters in the 'ho' environment
-    - name: Get HO ARO Clusters via ACM Search
-      ansible.builtin.include_role:
-        name: acm_search_util
-      vars:
-        acm_hub_url: "{{ acm_hub_api_variable }}" # Get from Survey/Workflow vars
-        acm_user: "{{ acm_admin_user_variable }}"
-        acm_pass: "{{ acm_admin_password_variable }}" # Use Vault!
-        # Using defaults for search_query_base (ManagedCluster Infrastructure.Cloud=Azure)
-        environment_label_filter: "ambiente=ho" # Filter by label
+      * `aro-upgrade/roles/acm_search_util/README.md`: (Conteúdo igual ao do passo anterior)
 
-    - name: Debug the retrieved HO clusters
-      debug:
-        var: acm_search_results
+        ````markdown
+        # acm_search_util Role
 
-    # Example 2: Get Deployments in a specific ARO cluster
-    - name: Get Deployments in a specific ARO cluster via ACM Search
-      ansible.builtin.include_role:
-        name: acm_search_util
-      vars:
-        acm_hub_url: "{{ acm_hub_api_variable }}"
-        acm_user: "{{ acm_admin_user_variable }}"
-        acm_pass: "{{ acm_admin_password_variable }}" # Use Vault!
-        search_query: "kind=Deployment apiVersion=apps/v1" # Overwrite base query for specific resource
-        target_cluster_name: "name-of-your-dv-cluster" # Filter for a specific cluster
-        # environment_label_filter is not needed here if filtering by cluster name is enough
-    ````
+        This role provides tasks to query the Red Hat ACM Search API using the `oc search` command from within an Ansible Execution Environment. It's designed to be included by other roles or playbooks that need to collect information about managed clusters via the ACM Hub.
 
-    ```
-    
-    ```
+        **Requirements:**
 
-Com este passo, você tem a role `acm_search_util` criada e configurada para interagir com o ACM Search, incluindo a capacidade de filtrar por Cloud "Azure" e pela label `ambiente`. Esta role será a base para coletar informações sobre seus clusters ARO gerenciados.
+        * `oc` binary installed and accessible in the Execution Environment's PATH.
+        * Ansible collections: `openshift.redhat`, `kubernetes.core`.
+        * Connectivity from the Execution Environment to the ACM Hub API endpoint.
 
-No próximo passo, começaremos a construir a role `health_check_upgrade`, que utilizará esta role `acm_search_util` para obter dados e realizar verificações iniciais.
+        **Role Variables:**
+
+        * `acm_hub_url` (Required): The API URL of the Red Hat Advanced Cluster Management Hub cluster (e.g., `https://api.your-acm-hub.example.com:6443`).
+        * `acm_user` (Required): Username to authenticate with the ACM Hub. This user needs permissions to perform Search queries.
+        * `acm_pass` (Required): Password for the ACM Hub user. **Use Ansible Vault to encrypt this variable in production.**
+        * `search_query_base` (Optional): The base search query string (defaults to `kind=ManagedCluster Infrastructure.Cloud=Azure`). Overwrite for specific resource searches.
+        * `search_query` (Required when overriding base): The full search query string (overrides `search_query_base` if provided).
+        * `target_cluster_name` (Optional): The name of a specific managed cluster to filter search results (e.g., `my-managed-cluster-pr-01a`). If omitted, the search applies across all clusters visible to the ACM user (filtered by `search_query_base`).
+        * `environment_label_filter` (Optional): A label selector string to filter results by environment (e.g., `ambiente=dv`, `ambiente=ho`). Applies in addition to `search_query_base`.
+
+        **Outputs:**
+
+        * `acm_search_results` (Fact): A list of dictionaries, where each dictionary represents a resource found by the `oc search` query in JSON format. This variable is set as an Ansible fact and is available in the playbook that includes this role.
+
+        **Example Usage (within another role or playbook):**
+
+        ```yaml
+        # Example 1: Get all ARO clusters in the 'ho' environment
+        - name: Get HO ARO Clusters via ACM Search
+          ansible.builtin.include_role:
+            name: acm_search_util # Assuming acm_search_util is in your roles path
+          vars:
+            acm_hub_url: "{{ acm_hub_api_variable }}" # Get from Survey/Workflow vars
+            acm_user: "{{ acm_admin_user_variable }}"
+            acm_pass: "{{ acm_admin_password_variable }}" # Use Vault!
+            # Using defaults for search_query_base (ManagedCluster Infrastructure.Cloud=Azure)
+            environment_label_filter: "ambiente=ho" # Filter by label
+
+        - name: Debug the retrieved HO clusters
+          debug:
+            var: acm_search_results
+
+        # Example 2: Get Deployments in a specific ARO cluster
+        - name: Get Deployments in a specific ARO cluster via ACM Search
+          ansible.builtin.include_role:
+            name: acm_search_util
+          vars:
+            acm_hub_url: "{{ acm_hub_api_variable }}"
+            acm_user: "{{ acm_admin_user_variable }}"
+            acm_pass: "{{ acm_admin_password_variable }}" # Use Vault!
+            search_query: "kind=Deployment apiVersion=apps/v1" # Overwrite base query for specific resource
+            target_cluster_name: "name-of-your-dv-cluster" # Filter for a specific cluster
+            # environment_label_filter is not needed here if filtering by cluster name is enough
+        ````
+
+        ```
+        
+        ```
+
+3.  Crie um playbook simples na raiz do diretório `aro-upgrade` para testar a role `acm_search_util`:
+
+      * `aro-upgrade/test_acm_search.yml`:
+        ```yaml
+        ---
+        - name: Test ACM Search Util Role
+          hosts: localhost # Rodar no Execution Environment
+          gather_facts: false
+
+          vars:
+            # Configure these variables with your ACM Hub details for testing
+            # In a real AAP workflow, these would come from secured credentials/survey
+            test_acm_hub_url: "YOUR_ACM_HUB_URL" # <<<<< SUBSTITUA PELA URL DO SEU ACM HUB
+            test_acm_user: "YOUR_ACM_USER"     # <<<<< SUBSTITUA PELO SEU USUÁRIO ACM
+            test_acm_pass: "YOUR_ACM_PASSWORD" # <<<<< SUBSTITUA PELA SUA SENHA ACM (IDEALMENTE USE VAULT)
+
+            # Configure environment for testing
+            test_environment: "dv" # <<<<< SUBSTITUA POR 'dv' ou 'ho' para testar o filtro
+
+          tasks:
+            - name: Include ACM Search Util role to find Managed Clusters by Environment
+              ansible.builtin.include_role:
+                name: acm_search_util
+              vars:
+                acm_hub_url: "{{ test_acm_hub_url }}"
+                acm_user: "{{ test_acm_user }}"
+                acm_pass: "{{ test_acm_pass }}"
+                # search_query_base defaultará para "kind=ManagedCluster Infrastructure.Cloud=Azure"
+                environment_label_filter: "ambiente={{ test_environment }}" # Usa a variável de teste
+
+
+            - name: Debug the list of ARO clusters found in the specified environment
+              ansible.builtin.debug:
+                msg: "Encontrados {{ acm_search_results | length }} clusters ARO no ambiente '{{ test_environment }}': {{ acm_search_results | map(attribute='name') }}"
+              # A variável 'acm_search_results' é populada pela role incluída.
+
+            - name: Assert that at least one cluster was found (basic check)
+              ansible.builtin.assert:
+                that:
+                  - acm_search_results is defined
+                  - acm_search_results is not none
+                  - acm_search_results | length > 0
+                fail_msg: "Nenhum cluster ARO encontrado no ambiente '{{ test_environment }}' com a query: {{ acm_search_results_raw.ansible_facts.final_search_query }}" # Acessa a query final da role para debug
+
+
+            - name: Include ACM Search Util role to find Deployments in the first found cluster
+              # Testa a funcionalidade de filtrar por cluster específico
+              ansible.builtin.include_role:
+                name: acm_search_util
+              vars:
+                acm_hub_url: "{{ test_acm_hub_url }}"
+                acm_user: "{{ test_acm_user }}"
+                acm_pass: "{{ test_acm_pass }}"
+                search_query: "kind=Deployment apiVersion=apps/v1" # Sobrescreve a query base para buscar Deployments
+                target_cluster_name: "{{ acm_search_results[0].name }}" # Usa o nome do primeiro cluster encontrado no passo anterior
+
+            - name: Debug Deployments found in the first cluster
+              ansible.builtin.debug:
+                msg: "Deployments encontrados no cluster '{{ acm_search_results[0].name }}': {{ acm_search_results | map(attribute='name') }}"
+
+            - name: Assert that Deployments were found (basic check)
+              ansible.builtin.assert:
+                that:
+                  - acm_search_results is defined
+                  - acm_search_results is not none
+                  - acm_search_results | length >= 0 # Pode haver 0 deployments, mas a query não deve falhar
+                success_msg: "Teste de busca de Deployments concluído com sucesso."
+        ```
+
+4.  **Execute o Playbook de Teste:**
+
+      * Instale as coleções necessárias se ainda não o fez:
+        ```bash
+        ansible-galaxy collection install openshift.redhat kubernetes.core azure.azcollection
+        ```
+      * **Substitua os placeholders no `test_acm_search.yml`** (`YOUR_ACM_HUB_URL`, `YOUR_ACM_USER`, `YOUR_ACM_PASSWORD`) pelos detalhes do seu ACM Hub. **Considere usar Ansible Vault para a senha\!**
+      * Execute o playbook a partir do diretório `aro-upgrade`:
+        ```bash
+        ansible-playbook test_acm_search.yml
+        ```
+
+Este teste executará a role `acm_search_util` duas vezes: primeiro para encontrar todos os clusters ARO em um ambiente específico (`dv` ou `ho`) usando a label `ambiente`, e depois para encontrar Deployments no primeiro cluster retornado. A saída do debug e os asserts mostrarão se a role funcionou e se o ACM Hub foi acessado corretamente.
+
+Se o teste falhar, verifique:
+
+  * Seus detalhes de conexão com o ACM Hub no `test_acm_search.yml`.
+  * Se o usuário ACM tem permissões para usar o ACM Search e ver os clusters gerenciados.
+  * Se o comando `oc` está instalado e acessível no ambiente onde o Ansible está rodando.
+  * Se a sintaxe da query (`Infrastructure.Cloud=Azure`, `ambiente=...`) corresponde à forma como seus clusters são representados no ACM Search.
+
+Este é o primeiro passo funcional e testável. Com a role `acm_search_util` validada, podemos prosseguir para a role `health_check_upgrade`.
