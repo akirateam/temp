@@ -1,80 +1,39 @@
 ---
-- name: Test ACM Search Util Role and Environment Filter
-  hosts: localhost # Rodar no Execution Environment (onde o 'oc' está)
+- name: "STEP 1 TEST: Verify ACM Search Utility Role in AAP"
+  hosts: localhost # Rodar no Execution Environment do AAP (onde o 'oc' está)
   gather_facts: false
 
-  vars:
-    # !!! CONFIGURE SUAS CREDENCIAIS ACM AQUI (USANDO VAULT PARA SENHAS) !!!
-    # Exemplo de como definir variáveis sensíveis (USE VAULT PARA acm_pass!)
-    test_acm_hub_url: "YOUR_ACM_HUB_URL" # <<<<< SUBSTITUA PELA URL DO SEU ACM HUB
-    test_acm_user: "YOUR_ACM_USER"     # <<<<< SUBSTITUA PELO SEU USUÁRIO ACM
-    # test_acm_pass: "YOUR_ACM_PASSWORD" # <<<<< SUBSTITUA PELA SUA SENHA ACM E COLOQUE NO VAULT
-
-    # Variável para a senha (carregada do vault)
-    # Exemplo: Defina 'test_acm_pass' no vault file e carregue aqui
-    # Ex: ansible-vault create group_vars/all/vault.yml
-    # Conteúdo: test_acm_pass: 'SUA_SENHA_REAL'
-    # Então no playbook: vars: { test_acm_pass: "{{ vault_acm_password }}" } # Nome da var no vault
-
-    # --- Configuração para Teste ---
-    test_environment: "ho" # <<<<< SUBSTITUA POR 'dv' ou 'ho' para testar o filtro
-    # O filtro de Infrastructure.Cloud=Azure já está no defaults/main.yml da role
+  # Variáveis que virão do AAP (Credenciais, Survey)
+  # acm_hub_url: (definida via Credencial no AAP ou Survey)
+  # acm_user: (definida via Credencial no AAP ou Survey)
+  # acm_pass: (definida via Credencial no AAP ou Survey - USE VAULT ou Credencial Tipo 'Vault')
+  # test_environment: (definida via Survey no AAP)
 
   tasks:
-    - name: Include ACM Search Util role to find Managed Clusters by Environment
+    - name: "STEP 1 TEST: Include ACM Search Util role to find ARO Managed Clusters by Environment"
       ansible.builtin.include_role:
-        name: acm_search_util # Assumindo que a role está em ./roles
+        name: acm_search_util # Assumindo que a role está no diretório 'roles' do projeto sincronizado
       vars:
-        acm_hub_url: "{{ test_acm_hub_url }}"
-        acm_user: "{{ test_acm_user }}"
-        # Carregar a senha do vault. O nome exato da variável no vault depende de como você a salvou.
-        # Exemplo: se você salvou como 'acm_admin_password' no vault
-        acm_pass: "{{ lookup('ansible.builtin.env', 'TEST_ACM_PASS_VAULT_PASSWORD') | ansible.builtin.vault_lookup('vault_acm_admin_password') }}" # Exemplo usando lookup no vault (Adapte!)
-        # Ou, se a senha está diretamente em um vault file carregado
-        # acm_pass: "{{ test_acm_pass }}" # Assumindo que test_acm_pass já veio do vault
-
+        # Passar variáveis do AAP para as variáveis da role
+        acm_hub_url: "{{ acm_hub_url }}"
+        acm_user: "{{ acm_user }}"
+        acm_pass: "{{ acm_pass }}" # Usar a variável fornecida pelo AAP (de Credencial ou Survey)
         # search_query_base defaultará para "kind=ManagedCluster Infrastructure.Cloud=Azure"
-        environment_label_filter: "ambiente={{ test_environment }}" # Usa a variável de teste para filtrar por label
+        environment_label_filter: "ambiente={{ test_environment }}" # Usa a variável do Survey
 
-    - name: Debug the list of ARO clusters found in the specified environment
+
+    - name: "STEP 1 TEST: Debug the list of ARO clusters found in the specified environment"
       ansible.builtin.debug:
         msg: "Encontrados {{ acm_search_results | length }} clusters ARO no ambiente '{{ test_environment }}': {{ acm_search_results | map(attribute='name') | default([]) }}"
       # A variável 'acm_search_results' é populada pela role incluída.
 
-    - name: Assert that at least one cluster was found in the environment
+    - name: "STEP 1 TEST: Assert that at least one cluster was found in the environment"
       ansible.builtin.assert:
         that:
           - acm_search_results is defined
           - acm_search_results is not none
           - acm_search_results | length > 0
-        fail_msg: "Nenhum cluster ARO encontrado no ambiente '{{ test_environment }}' com a query: {{ acm_search_results_raw.ansible_facts.final_search_query }}" # Acessa a query final da role para debug
-
-    - name: Include ACM Search Util role to find Deployments in the first found cluster
-      # Testa a funcionalidade de filtrar por cluster específico
-      ansible.builtin.include_role:
-        name: acm_search_util
-      vars:
-        acm_hub_url: "{{ test_acm_hub_url }}"
-        acm_user: "{{ test_acm_user }}"
-         # Carregar a senha do vault (adapte)
-        acm_pass: "{{ lookup('ansible.builtin.env', 'TEST_ACM_PASS_VAULT_PASSWORD') | ansible.builtin.vault_lookup('vault_acm_admin_password') }}" # Exemplo (Adapte!)
-        # acm_pass: "{{ test_acm_pass }}" # Assumindo que test_acm_pass já veio do vault
-
-        search_query: "kind=Deployment apiVersion=apps/v1" # Sobrescreve a query base para buscar Deployments
-        # Use o nome do primeiro cluster encontrado (se houver)
-        target_cluster_name: "{{ acm_search_results[0].name if acm_search_results | length > 0 else '' }}"
-        # environment_label_filter não é necessário aqui se filtrar por cluster name é suficiente
-
-    - name: Debug Deployments found in the first cluster
-      ansible.builtin.debug:
-        msg: "Deployments encontrados no cluster '{{ acm_search_results_raw.ansible_facts.final_search_query | split('cluster=') | last | split(' ')[0] }}': {{ acm_search_results | map(attribute='name') | default([]) }}" # Extrair nome do cluster da query final para debug
-
-    - name: Assert that Deployments query did not fail
-      ansible.builtin.assert:
-        that:
-          - acm_search_results is defined
-          - acm_search_results is not none
-          # Pode haver 0 deployments, mas a query não deve falhar.
-          # Verificar se search_results_raw foi bem sucedido.
-          - acm_search_results_raw is success
-        success_msg: "Teste de busca de Deployments concluído com sucesso."
+        fail_msg: |
+          "STEP 1 TEST FAILED: Nenhum cluster ARO encontrado no ambiente '{{ test_environment }}' com a query.
+           Verifique as variáveis de conexão no AAP (URL, Usuário, Senha/Vault), permissões do usuário ACM,
+           conectividade do EE, e se os clusters ARO existem no ACM com a label 'ambiente={{ test_environment }}'."
