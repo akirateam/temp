@@ -1,0 +1,14 @@
+---
+# Default ACM Hub connection details - OVERRIDE THESE SECURELY VIA AAP
+# acm_hub_url: "https://api.your-acm-hub.example.com:6443" # SUBSTITUIR COM VALOR SEGURO NO AAP
+# acm_user: "acm_admin_user" # SUBSTITUIR COM VALOR SEGURO NO AAP
+# acm_pass: "acm_admin_password" # SUBSTITUIR COM VALOR SEGURO NO AAP - USAR VAULT!!!
+
+# Default search query base - Inclui filtro por Infrastructure/Cloud para focar em ARO
+search_query_base: "kind=ManagedCluster Infrastructure.Cloud=Azure"
+
+# Default target cluster name - Usado para filtrar a busca para um cluster específico
+target_cluster_name: ""
+
+# Default environment label filter - Usado para filtrar por ambiente (dv, ho)
+environment_label_filter: "" # Ex: ambiente=dv ou ambiente=ho
