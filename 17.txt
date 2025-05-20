@@ -481,3 +481,879 @@ Códigos Atualizados/Novos:
   delegate_to: "{{ groups['bastion'][0] if groups['bastion'] is defined else 'localhost' }}"
 
 - name: "COMPARATOR: Load {
+---
+Compreendido. Você quer o código completo para o "depara" (comparação antes e depois) de estado de clusters e aplicações, incluindo o snapshot, e tudo isso em um processo operacional e executável no AAP.
+Retomamos o plano de conectar diretamente aos clusters gerenciados para coletar os dados, já que o oc search não está disponível. Isso significa que a role acm_list_clusters será usada apenas para obter a lista de clusters alvo (seus nomes e URLs de API), e a coleta detalhada de snapshots será feita diretamente da API de cada cluster.
+Vamos gerar os códigos completos para as roles de health check (pré e pós) e a role de comparação.
+Estrutura de Pastas Completa:
+aro-upgrade/
+├── roles/
+│   ├── acm_list_clusters/  # Role para listar Managed Clusters do ACM Hub (via API padrão)
+│   │   ├── tasks/
+│   │   │   └── main.yml
+│   │   ├── meta/
+│   │   │   └── main.yml
+│   │   ├── defaults/
+│   │   │   └── main.yml
+│   │   └── vars/
+│   │       └── main.yml
+│   ├── health_check_upgrade/ # Role para checks pré-upgrade e captura de snapshot ANTES
+│   │   ├── tasks/
+│   │   │   ├── main.yml
+│   │   │   ├── capture_pre_upgrade_state_direct.yml # Coleta de snapshot direto do cluster
+│   │   │   ├── upload_pre_upgrade_state.yml # Upload para Azure Blob
+│   │   │   ├── check_nodes.yml # Exemplo de task de check
+│   │   │   ├── check_clusters_operators.yml # Vazio para implementação
+│   │   │   ├── check_mcps.yml # Vazio para implementação
+│   │   │   ├── check_pods.yml # Vazio para implementação
+│   │   │   ├── check_pv_and_pvc.yml # Vazio para implementação
+│   │   │   ├── check_pdbs.yml # Vazio para implementação
+│   │   │   ├── check_deprecated_apis.yml # Vazio para implementação
+│   │   │   ├── create_report.yml # Vazio para implementação
+│   │   │   └── backup_etcd.yml # Vazio para implementação
+│   │   ├── meta/
+│   │   │   └── main.yml
+│   │   ├── defaults/
+│   │   │   └── main.yml
+│   │   ├── vars/
+│   │   │   └── main.yml
+│   │   └── handlers/
+│   │       └── main.yml
+│   ├── health_check_pos_upgrade/ # Role para checks pós-upgrade e captura de snapshot DEPOIS
+│   │   ├── tasks/
+│   │   │   ├── main.yml
+│   │   │   ├── capture_post_upgrade_state_direct.yml # Coleta de snapshot direto do cluster
+│   │   │   ├── upload_post_upgrade_state.yml # Upload para Azure Blob
+│   │   │   ├── check_nodes_pos.yml # Vazio para implementação
+│   │   │   ├── check_clusters_operators_pos.yml # Vazio para implementação
+│   │   │   ├── check_mcps_pos.yml # Vazio para implementação
+│   │   │   ├── check_pods_pos.yml # Vazio para implementação
+│   │   │   ├── check_pv_and_pvc_pos.yml # Vazio para implementação
+│   │   │   ├── report_pos.yml # Vazio para implementação
+│   │   │   ├── return_mcps.yml # Vazio para implementação
+│   │   │   └── return_pdbs.yml # Vazio para implementação
+│   │   ├── meta/
+│   │   │   └── main.yml
+│   │   ├── defaults/
+│   │   │   └── main.yml
+│   │   ├── vars/
+│   │   │   └── main.yml
+│   │   └── handlers/
+│   │       └── main.yml
+│   ├── in_place_state_comparator/ # Role para comparar snapshots e gerar relatório HTML
+│   │   ├── tasks/
+│   │   │   ├── main.yml
+│   │   │   ├── compare_resources.yml
+│   │   │   └── generate_report.yml
+│   │   ├── templates/
+│   │   │   └── report.j2 # Template HTML do relatório
+│   │   ├── meta/
+│   │   │   └── main.yml
+│   │   ├── defaults/
+│   │   │   └── main.yml
+│   │   └── vars/
+│   │       └── main.yml
+│   └── must_gather/ # Role para coletar must-gather e fazer upload
+│       ├── tasks/
+│       │   ├── main.yml
+│       │   ├── collecting_must_gather.yml
+│       │   └── upload_must_gather.yml
+│       ├── meta/
+│       │   └── main.yml
+│       ├── defaults/
+│       │   └── main.yml
+│       └── vars/
+│           └── main.yml
+├── playbooks/
+│   └── process_single_pair.yml # Playbook que um Job Template no AAP chamará em paralelo
+├── inventory/
+│   └── dynamic_acm_inventory.py # Script de inventário dinâmico do ACM (adaptar do que você tinha)
+└── .vault_pass.txt # Arquivo para a senha mestra do Vault (localmente no EE)
+
+Código Completo dos Componentes:
+1. Role: acm_list_clusters
+Esta role usará o módulo kubernetes.core.k8s_info para listar recursos ManagedCluster no ACM Hub. Ela é crucial para a seleção de alvos no AAP Survey.
+ * aro-upgrade/roles/acm_list_clusters/tasks/main.yml
+   ---
+# Role to list Managed Clusters from ACM Hub using k8s_info.
+# This role connects to the ACM Hub API and lists ManagedCluster resources.
+# It filters by Infrastructure.Cloud=Azure and optionally by environment label.
+
+# Assumes ACM Hub connection details (acm_hub_url, acm_user, acm_pass) are provided to the role call.
+# Assumes optional environment_label_filter (e.g., "ambiente=ho") is provided.
+
+- name: "ACM LIST CLUSTERS: Authenticate to ACM Hub"
+  redhat.openshift.openshift_auth:
+    host: "{{ acm_hub_url }}"
+    username: "{{ acm_user }}"
+    password: "{{ acm_pass }}"
+    validate_certs: no # Ajuste para 'yes' se tiver certificados válidos no EE e ACM Hub
+  register: acm_hub_auth_results
+  delegate_to: localhost # Explicitamente rodar no Execution Environment
+
+- name: "ACM LIST CLUSTERS: Get ManagedCluster resources from ACM Hub"
+  kubernetes.core.k8s_info:
+    host: "{{ acm_hub_url }}"
+    api_key: "{{ acm_hub_auth_results['openshift_auth']['api_key'] }}"
+    validate_certs: no # Ajuste
+    kind: ManagedCluster
+    api_version: cluster.open-cluster-management.io/v1
+    # Filtrar por Infrastructure.Cloud=Azure diretamente aqui.
+    # k8s_info não suporta queries complexas de labels como oc search.
+    # O filtro de label de ambiente será feito APÓS obter os clusters.
+    label_selector: "vendor=OpenShift,cloud=Azure" # ManagedClusters from ARO often have these labels
+  register: acm_managed_clusters_raw
+  delegate_to: localhost
+
+- name: "ACM LIST CLUSTERS: Filter ManagedClusters by environment label and prepare for consumption"
+  set_fact:
+    # Começa com os clusters Azure OpenShift
+    filtered_clusters: "{{ acm_managed_clusters_raw.resources | default([]) }}"
+    # Aplica o filtro de ambiente se fornecido
+    final_managed_clusters_list: >-
+      {{ filtered_clusters
+         | selectattr('metadata.labels', 'defined') # Certifica que o cluster tem labels
+         | selectattr('metadata.labels.' ~ environment_label_filter.split('=')[0], 'defined') # Verifica se a label específica existe
+         | selectattr('metadata.labels.' ~ environment_label_filter.split('=')[0], 'equalto', environment_label_filter.split('=')[1]) # Compara o valor da label
+         | list
+         if environment_label_filter is defined and environment_label_filter != ''
+         else filtered_clusters # Se não houver filtro de ambiente, usa todos os ARO encontrados
+      }}
+  delegate_to: localhost
+
+# A variável `final_managed_clusters_list` agora contém a lista filtrada de clusters ARO.
+# Cada item nesta lista é um objeto ManagedCluster completo.
+
+ * aro-upgrade/roles/acm_list_clusters/defaults/main.yml
+   ---
+# Default ACM Hub connection details - OVERRIDE THESE SECURELY VIA AAP
+# acm_hub_url: "https://api.your-acm-hub.example.com:6443" # SUBSTITUIR COM VALOR SEGURO NO AAP
+# acm_user: "acm_admin_user" # SUBSTITUIR COM VALOR SEGURO NO AAP
+# acm_pass: "acm_admin_password" # SUBSTITUIR COM VALOR SEGURO NO AAP - USAR VAULT!!!
+
+# Default environment label filter - Usado para filtrar Managed Clusters por ambiente (dv, ho)
+# Deve ser fornecido ao chamar a role para filtrar por ambiente.
+environment_label_filter: "" # Ex: ambiente=dv ou ambiente=ho
+
+ * aro-upgrade/roles/acm_list_clusters/meta/main.yml
+   galaxy_info:
+  author: Your Name
+  description: Role to list Managed Clusters from Red Hat ACM Hub
+  company: Your Company
+
+  license: license (GPL-2.0-or-later, MIT, etc)
+
+  min_ansible_version: 2.12
+
+  galaxy_tags:
+    - kubernetes
+    - openshift
+    - acm
+    - inventory
+
+dependencies:
+  - name: openshift.redhat
+    version: "*"
+  - name: kubernetes.core
+    version: "*"
+
+ * aro-upgrade/roles/acm_list_clusters/vars/main.yml (Vazio)
+2. Role: health_check_upgrade (Coleta Direta - Estrutura e Tasks Essenciais)
+Esta role realizará a autenticação direta no cluster gerenciado, coletará snapshots e os enviará para o Azure Blob.
+ * aro-upgrade/roles/health_check_upgrade/tasks/main.yml
+   ---
+# Main tasks for the health_check_upgrade role.
+# This role performs pre-upgrade checks and captures the initial state
+# by connecting directly to the managed cluster API.
+
+# Assumes Managed Cluster connection details (openshift_api_url, cluster_user, cluster_pass) are provided.
+# Assumes cluster_name (managed cluster name) is provided.
+# Assumes Azure Blob Storage variables are provided.
+# Assumes upgrade details (desired_version, update_channel) are provided.
+
+- name: "HEALTH CHECK PRE: Authenticating to the Managed Cluster API"
+  redhat.openshift.openshift_auth:
+    host: "{{ openshift_api_url }}" # URL da API do managed cluster
+    username: "{{ cluster_user }}" # Credenciais do managed cluster
+    password: "{{ cluster_pass }}" # USE VAULT para a senha
+    validate_certs: no # Ajuste conforme a configuração dos seus certificados no EE e cluster
+  register: managed_cluster_auth_results
+  delegate_to: localhost # Explicitamente rodar no Execution Environment
+
+# --- Tasks to capture the state before upgrade ---
+- name: "HEALTH CHECK PRE: Include task to capture pre-upgrade state directly from the cluster and save locally"
+  ansible.builtin.include_tasks: capture_pre_upgrade_state_direct.yml
+
+# --- Tasks to perform pre-upgrade health checks ---
+# Implementaremos o conteúdo destas tasks nos próximos passos.
+# Elas usarão os dados coletados em 'capture_pre_upgrade_state_direct.yml'.
+# Devem falhar o playbook se problemas críticos forem encontrados.
+
+- name: "HEALTH CHECK PRE: Include task to check Nodes state"
+  ansible.builtin.include_tasks: check_nodes.yml
+
+- name: "HEALTH CHECK PRE: Include task to check Cluster Operators state"
+  ansible.builtin.include_tasks: check_clusters_operators.yml
+
+- name: "HEALTH CHECK PRE: Include task to check Machine Config Pools (MCPs) state"
+  ansible.builtin.include_tasks: check_mcps.yml
+
+- name: "HEALTH CHECK PRE: Include task to check Pods state (focus on problematic ones)"
+  ansible.builtin.include_tasks: check_pods.yml
+
+- name: "HEALTH CHECK PRE: Include task to check Persistent Volumes (PVs) and Persistent Volume Claims (PVCs)"
+  ansible.builtin.include_tasks: check_pv_and_pvc.yml
+
+- name: "HEALTH CHECK PRE: Include task to check Pod Disruption Budgets (PDBs)"
+  ansible.builtin.include_tasks: check_pdbs.yml
+
+- name: "HEALTH CHECK PRE: Include task to check for Deprecated APIs"
+  ansible.builtin.include_tasks: check_deprecated_apis.yml
+
+
+# --- Tasks to save the captured state and report ---
+- name: "HEALTH CHECK PRE: Include task to upload pre-upgrade state to Azure Blob"
+  ansible.builtin.include_tasks: upload_pre_upgrade_state.yml
+
+# --- Task to generate a summary report (Optional, the detailed diff is Post-Upgrade) ---
+- name: "HEALTH CHECK PRE: Include task to create a summary report locally"
+  ansible.builtin.include_tasks: create_report.yml
+
+# --- Task to handle ETCD backup (Conditional for ARO) ---
+- name: "HEALTH CHECK PRE: Include task to perform ETCD backup (if not ARO)"
+  ansible.builtin.include_tasks: backup_etcd.yml
+  when: cluster_type is defined and cluster_type != 'aro' # Rodar apenas se não for ARO
+
+ * aro-upgrade/roles/health_check_upgrade/tasks/capture_pre_upgrade_state_direct.yml:
+   ---
+# Task to capture the state of key resources before the upgrade by connecting directly to the cluster API.
+# The captured state is saved locally first.
+
+# Assumes openshift_api_url, managed_cluster_auth_results (Managed Cluster auth token) are provided.
+# Assumes cluster_name (managed cluster name) is provided.
+
+- name: "CAPTURE STATE (BEFORE - Direct): Ensure local temp directory for snapshots exists"
+  ansible.builtin.file:
+    path: "/tmp/snapshots/{{ cluster_name }}/before" # Caminho local temporário no EE
+    state: directory
+    mode: '0755'
+  delegate_to: localhost # Roda no Execution Environment
+
+
+- name: "CAPTURE STATE (BEFORE - Direct): Define list of resource types to capture"
+  set_fact:
+    resources_to_snapshot_direct:
+      - name: deployments
+        kind: Deployment
+        api_version: apps/v1
+      - name: statefulsets
+        kind: StatefulSet
+        api_version: apps/v1
+      - name: daemonsets
+        kind: DaemonSet
+        api_version: apps/v1
+      - name: services
+        kind: Service
+        api_version: v1
+      - name: routes
+        kind: Route
+        api_version: route.openshift.io/v1
+      - name: hpas
+        kind: HorizontalPodAutoscaler # Verifique apiVersion correta para sua versão OCP/ARO
+      - name: clusteroperators
+        kind: ClusterOperator
+        api_version: config.openshift.io/v1
+      - name: machineconfigpools
+        kind: MachineConfigPool
+        api_version: machineconfiguration.openshift.io/v1
+      - name: nodes
+        kind: Node
+        api_version: v1
+      # Adicionar outros tipos relevantes conforme necessário
+      - name: configmaps
+        kind: ConfigMap
+        api_version: v1
+      # CUIDADO com Secrets - pode expor dados sensíveis no bucket
+      # - name: secrets
+      #   kind: Secret
+      #   api_version: v1
+      - name: pvcs
+        kind: PersistentVolumeClaim
+        api_version: v1
+      - name: pvs
+        kind: PersistentVolume
+        api_version: v1
+      # Adicione mais recursos se necessário, como Role, RoleBinding, ServiceAccount
+      # - name: roles
+      #   kind: Role
+      #   api_version: rbac.authorization.k8s.io/v1
+      # - name: rolebindings
+      #   kind: RoleBinding
+      #   api_version: rbac.authorization.k8s.io/v1
+      # - name: serviceaccounts
+      #   kind: ServiceAccount
+      #   api_version: v1
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (BEFORE - Direct): Capture and save state for each resource type locally"
+  loop: "{{ resources_to_snapshot_direct }}"
+  loop_control:
+    loop_var: resource_item
+  block:
+    - name: "CAPTURE STATE (BEFORE - Direct): Get {{ resource_item.kind }} state directly from the cluster"
+      kubernetes.core.k8s_info:
+        kind: "{{ resource_item.kind }}"
+        api_version: "{{ resource_item.api_version }}"
+        host: "{{ openshift_api_url }}" # Conecta DIRETAMENTE ao managed cluster
+        api_key: "{{ managed_cluster_auth_results['openshift_auth']['api_key'] }}" # Usa credenciais autenticadas
+        validate_certs: no # Ajuste conforme necessário
+        namespace: "" # Capturar de todos os namespaces (pode refinar com loop de namespaces de usuário se necessário)
+      register: resource_state_before_direct
+      delegate_to: localhost # Roda no Execution Environment
+
+    - name: "CAPTURE STATE (BEFORE - Direct): Save {{ resource_item.kind }} state locally"
+      ansible.builtin.copy:
+        content: "{{ resource_state_before_direct.resources | to_nice_yaml }}" # Conteúdo direto do k8s_info
+        dest: "/tmp/snapshots/{{ cluster_name }}/before/{{ resource_item.name }}.yaml" # Caminho local temporário
+        mode: '0644'
+      when: resource_state_before_direct.resources | length > 0 # Salva o arquivo apenas se encontrar recursos
+      delegate_to: localhost
+
+# Pods problemáticos: Obter a lista completa de pods e filtrar localmente.
+- name: "CAPTURE STATE (BEFORE - Direct): Get all Pods state directly from the cluster"
+  kubernetes.core.k8s_info:
+    kind: Pod
+    api_version: v1
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ managed_cluster_auth_results['openshift_auth']['api_key'] }}"
+    validate_certs: no # Ajuste
+    namespace: "" # Obter de todos os namespaces
+  register: all_pods_direct
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (BEFORE - Direct): Filter problematic pods locally (based on phase and container status)"
+  set_fact:
+    # Filtrar por fases problemáticas e status de container
+    pods_problematicos_pre: >-
+      {{
+        all_pods_direct.resources
+        | json_query(
+          '[?
+            status.phase==`Failed`
+            || status.phase==`Unknown`
+            || status.phase==`Pending`
+            || (status.containerStatuses[?
+               state.waiting != null # Container Waiting (ex: ImagePullBackOff)
+               ||
+               (state.terminated != null && state.terminated.exitCode != `0`) # Container Terminated com erro
+             ] | length > 0) # Se houver pelo menos um container com problema
+           ]'
+        )
+      }}
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (BEFORE - Direct): Save problematic pods list locally"
+  ansible.builtin.copy:
+    content: "{{ pods_problematicos_pre | to_nice_yaml }}"
+    dest: "/tmp/snapshots/{{ cluster_name }}/before/problematic_pods.yaml"
+    mode: '0644'
+  when: pods_problematicos_pre | length > 0 # Salva o arquivo apenas se a lista não estiver vazia
+  delegate_to: localhost
+
+ * aro-upgrade/roles/health_check_upgrade/tasks/upload_pre_upgrade_state.yml:
+   ---
+# Task to upload the captured pre-upgrade state (snapshots and data) from local temp to Azure Blob Storage.
+
+# Assumes cluster_name, azure_storage_account_name, azure_storage_container_name, azure_storage_key are provided.
+# Assumes snapshots were saved locally to /tmp/snapshots/{{ cluster_name }}/before/
+
+- name: Upload collected pre-upgrade snapshots and data to Azure Blob
+  vars:
+    local_snapshot_dir: "/tmp/snapshots/{{ cluster_name }}/before"
+  block:
+    - name: Find all snapshot files locally
+      ansible.builtin.find:
+        paths: "{{ local_snapshot_dir }}"
+        patterns: "*.yaml"
+        recurse: no
+      register: local_snapshot_files
+      delegate_to: localhost
+
+    - name: Upload each snapshot file to Azure Blob
+      azure.azcollection.azure_blob:
+        account_name: "{{ azure_storage_account_name }}"
+        container_name: "{{ azure_storage_container_name }}"
+        blob: "{{ cluster_name }}/before/{{ item | basename }}" # Caminho no bucket: <cluster_name>/before/<filename>.yaml
+        src: "{{ item }}" # Caminho local do arquivo
+        state: present
+        mode: upload
+        storage_account_key: "{{ azure_storage_key }}" # USE VAULT!
+      loop: "{{ local_snapshot_files.files | map(attribute='path') }}"
+      delegate_to: localhost
+
+    - name: Clean up local pre-upgrade snapshot directory
+      ansible.builtin.file:
+        path: "{{ local_snapshot_dir }}"
+        state: absent
+      delegate_to: localhost
+
+ * Crie arquivos vazios para as outras tarefas de check e relatórios (check_nodes.yml, check_clusters_operators.yml, check_mcps.yml, check_pods.yml, check_pv_and_pvc.yml, check_pdbs.yml, check_deprecated_apis.yml, create_report.yml, backup_etcd.yml). Implementaremos seu conteúdo no próximo passo.
+ * Crie os arquivos meta, defaults, vars, handlers e README para a role health_check_upgrade.
+   * aro-upgrade/roles/health_check_upgrade/meta/main.yml: (Conteúdo igual ao da resposta anterior, com dependências ajustadas)
+   * aro-upgrade/roles/health_check_upgrade/defaults/main.yml: (Conteúdo igual ao da resposta anterior, com variáveis de conexão e Azure Blob nos defaults)
+   * aro-upgrade/roles/health_check_upgrade/vars/main.yml: (Vazio)
+   * aro-upgrade/roles/health_check_upgrade/handlers/main.yml: (Vazia)
+   * aro-upgrade/roles/health_check_upgrade/README.md: (Conteúdo igual ao da resposta anterior)
+3. Criar Playbook de Teste para o Passo 1 no AAP:
+Este playbook será o seu primeiro Job Template no AAP para testar a nova role acm_list_clusters.
+ * aro-upgrade/test_step1_list_clusters.yml:
+   ---
+- name: "STEP 1 TEST: List ARO Clusters via ACM API and Verify"
+  hosts: localhost # Rodar no Execution Environment
+  gather_facts: false
+
+  vars:
+    # !!! CONFIGURE ESTAS VARIÁVEIS NO AAP (Credenciais, Survey) !!!
+    # Elas serão mapeadas das credenciais do AAP
+    # acm_hub_url:
+    # acm_user:
+    # acm_pass:
+
+    # Variável para o Teste (definida via Survey no AAP)
+    target_environment: "ho" # <<<<< Será preenchida pelo Survey do AAP
+
+  tasks:
+    - name: "STEP
+---
+Compreendido. Você está perguntando sobre o "Pós", ou seja, as etapas e o código relacionados às verificações e ações que ocorrem após o upgrade do cluster, incluindo a comparação do estado "antes e depois".
+Vamos detalhar a implementação da role health_check_pos_upgrade e da role in_place_state_comparator, que juntas formam a fase "Pós-Upgrade" da automação.
+Fase Pós-Upgrade: Verificação, Restauração e Comparação de Estado
+Esta fase é crucial para garantir que o cluster atualizado esteja saudável, que as configurações de volta ao normal e que nenhuma inconsistência inesperada foi introduzida pelo upgrade.
+Passo 3: Criar a Role health_check_pos_upgrade (Coleta Direta - Estrutura e Tasks Essenciais)
+Esta role é a contraparte da health_check_upgrade. Ela será responsável por:
+ * Realizar verificações essenciais de saúde no cluster alvo após a conclusão do upgrade.
+ * Capturar um snapshot detalhado do estado dos recursos no cluster alvo depois do upgrade, conectando diretamente via k8s_info.
+ * Salvar este snapshot no Azure Blob Storage.
+ * Realizar ações de "restauração" (como reativar PDBs e MCPs pausados).
+ * Chamar a role in_place_state_comparator para executar a comparação "antes e depois" e gerar o relatório.
+Crie a seguinte estrutura de pastas para a nova role dentro de aro-upgrade/roles:
+cd aro-upgrade/roles
+mkdir -p health_check_pos_upgrade/{tasks,meta,defaults,vars,handlers,templates}
+
+Agora, preencha o conteúdo dos arquivos desta role.
+ * aro-upgrade/roles/health_check_pos_upgrade/tasks/main.yml:
+   ---
+# Main tasks for the health_check_pos_upgrade role.
+# This role performs post-upgrade checks, captures the final state,
+# and orchestrates the comparison with the pre-upgrade state.
+
+# Assumes Managed Cluster connection details (openshift_api_url, cluster_user, cluster_pass) are provided.
+# Assumes cluster_name (managed cluster name) is provided.
+# Assumes Azure Blob Storage variables are provided.
+# Assumes upgrade details (desired_version, update_channel) are provided.
+
+- name: "HEALTH CHECK POS: Authenticating to the Managed Cluster API"
+  redhat.openshift.openshift_auth:
+    host: "{{ openshift_api_url }}" # URL da API do managed cluster
+    username: "{{ cluster_user }}" # Credenciais do managed cluster
+    password: "{{ cluster_pass }}" # USE VAULT para a senha
+    validate_certs: no # Ajuste conforme a configuração dos seus certificados no EE e cluster
+  register: managed_cluster_auth_results
+  delegate_to: localhost # Explicitamente rodar no Execution Environment
+
+# --- Tasks to capture the state after upgrade ---
+- name: "HEALTH CHECK POS: Include task to capture post-upgrade state directly from the cluster and save locally"
+  ansible.builtin.include_tasks: capture_post_upgrade_state_direct.yml
+
+# --- Tasks to upload the captured state ---
+- name: "HEALTH CHECK POS: Include task to upload post-upgrade state to Azure Blob"
+  ansible.builtin.include_tasks: upload_post_upgrade_state.yml
+
+# --- Tasks to perform post-upgrade health checks ---
+# Implementaremos o conteúdo destas tasks nos próximos passos.
+# Elas usarão os dados coletados em 'capture_post_upgrade_state_direct.yml'.
+
+- name: "HEALTH CHECK POS: Include task to check Nodes state (post-upgrade)"
+  ansible.builtin.include_tasks: check_nodes_pos.yml
+
+- name: "HEALTH CHECK POS: Include task to check Cluster Operators state (post-upgrade)"
+  ansible.builtin.include_tasks: check_clusters_operators_pos.yml
+
+- name: "HEALTH CHECK POS: Include task to check Machine Config Pools (MCPs) state (post-upgrade)"
+  ansible.builtin.include_tasks: check_mcps_pos.yml
+
+- name: "HEALTH CHECK POS: Include task to check Pods state (post-upgrade)"
+  ansible.builtin.include_tasks: check_pods_pos.yml
+
+- name: "HEALTH CHECK POS: Include task to check Persistent Volumes (PVs) and Persistent Volume Claims (PVCs) (post-upgrade)"
+  ansible.builtin.include_tasks: check_pv_and_pvc_pos.yml
+
+
+# --- Tasks to restore original configurations (PDBs, MCPs) ---
+- name: "HEALTH CHECK POS: Include task to return PDBs to original state"
+  ansible.builtin.include_tasks: return_pdbs.yml
+
+- name: "HEALTH CHECK POS: Include task to resume Machine Config Pools (MCPs)"
+  ansible.builtin.include_tasks: return_mcps.yml
+
+
+# --- Orchestrate the BEFORE/AFTER comparison ---
+- name: "HEALTH CHECK POS: Include task to compare before/after snapshots and generate report"
+  ansible.builtin.include_role:
+    name: in_place_state_comparator # Chama a role de comparação (a ser criada no Passo 4)
+  vars:
+    cluster_name: "{{ cluster_name }}"
+    azure_storage_account_name: "{{ azure_storage_account_name }}"
+    azure_storage_container_name: "{{ azure_storage_container_name }}"
+    azure_storage_key: "{{ azure_storage_key }}" # USE VAULT!
+    # Você pode passar pods_problematicos_pre e pods_problematicos_pos aqui
+    # ou carregar essas listas dentro da role in_place_state_comparator.
+    # A estratégia aqui é que o comparador baixe os arquivos de snapshot para fazer a comparação.
+  delegate_to: localhost # Explicitamente rodar no Execution Environment
+
+# --- Task to generate a simple post-upgrade report (Optional, detailed diff is primary) ---
+- name: "HEALTH CHECK POS: Include task to create a simple post-upgrade report locally"
+  ansible.builtin.include_tasks: report_pos.yml
+
+ * aro-upgrade/roles/health_check_pos_upgrade/tasks/capture_post_upgrade_state_direct.yml: Esta tarefa é similar à capture_pre_upgrade_state_direct.yml, mas salva em /after/.
+   ---
+# Task to capture the state of key resources after the upgrade by connecting directly to the cluster API.
+# The captured state is saved locally first.
+
+# Assumes openshift_api_url, managed_cluster_auth_results (Managed Cluster auth token) are provided.
+# Assumes cluster_name (managed cluster name) is provided.
+
+- name: "CAPTURE STATE (AFTER - Direct): Ensure local temp directory for snapshots exists"
+  ansible.builtin.file:
+    path: "/tmp/snapshots/{{ cluster_name }}/after" # Caminho local temporário no EE
+    state: directory
+    mode: '0755'
+  delegate_to: localhost # Roda no Execution Environment
+
+
+- name: "CAPTURE STATE (AFTER - Direct): Define list of resource types to capture"
+  set_fact:
+    resources_to_snapshot_direct:
+      - name: deployments
+        kind: Deployment
+        api_version: apps/v1
+      - name: statefulsets
+        kind: StatefulSet
+        api_version: apps/v1
+      - name: daemonsets
+        kind: DaemonSet
+        api_version: apps/v1
+      - name: services
+        kind: Service
+        api_version: v1
+      - name: routes
+        kind: Route
+        api_version: route.openshift.io/v1
+      - name: hpas
+        kind: HorizontalPodAutoscaler # Verifique apiVersion correta para sua versão OCP/ARO
+      - name: clusteroperators
+        kind: ClusterOperator
+        api_version: config.openshift.io/v1
+      - name: machineconfigpools
+        kind: MachineConfigPool
+        api_version: machineconfiguration.openshift.io/v1
+      - name: nodes
+        kind: Node
+        api_version: v1
+      # Adicionar outros tipos relevantes (mesmos que no pré-upgrade)
+      - name: configmaps
+        kind: ConfigMap
+        api_version: v1
+      - name: pvcs
+        kind: PersistentVolumeClaim
+        api_version: v1
+      - name: pvs
+        kind: PersistentVolume
+        api_version: v1
+      # Adicione mais recursos se necessário, como Role, RoleBinding, ServiceAccount
+      # - name: roles
+      #   kind: Role
+      #   api_version: rbac.authorization.k8s.io/v1
+      # - name: rolebindings
+      #   kind: RoleBinding
+      #   api_version: rbac.authorization.k8s.io/v1
+      # - name: serviceaccounts
+      #   kind: ServiceAccount
+      #   api_version: v1
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (AFTER - Direct): Capture and save state for each resource type locally"
+  loop: "{{ resources_to_snapshot_direct }}"
+  loop_control:
+    loop_var: resource_item
+  block:
+    - name: "CAPTURE STATE (AFTER - Direct): Get {{ resource_item.kind }} state directly from the cluster"
+      kubernetes.core.k8s_info:
+        kind: "{{ resource_item.kind }}"
+        api_version: "{{ resource_item.api_version }}"
+        host: "{{ openshift_api_url }}" # Conecta DIRETAMENTE ao managed cluster
+        api_key: "{{ managed_cluster_auth_results['openshift_auth']['api_key'] }}" # Usa credenciais autenticadas
+        validate_certs: no # Ajuste conforme necessário
+        namespace: "" # Capturar de todos os namespaces (pode refinar com loop de namespaces de usuário se necessário)
+      register: resource_state_after_direct
+      delegate_to: localhost # Roda no Execution Environment
+
+    - name: "CAPTURE STATE (AFTER - Direct): Save {{ resource_item.kind }} state locally"
+      ansible.builtin.copy:
+        content: "{{ resource_state_after_direct.resources | to_nice_yaml }}" # Conteúdo direto do k8s_info
+        dest: "/tmp/snapshots/{{ cluster_name }}/after/{{ resource_item.name }}.yaml" # Caminho local temporário
+        mode: '0644'
+      when: resource_state_after_direct.resources | length > 0 # Salva o arquivo apenas se encontrar recursos
+      delegate_to: localhost
+
+# Pods problemáticos: Obter a lista completa de pods e filtrar localmente.
+- name: "CAPTURE STATE (AFTER - Direct): Get all Pods state directly from the cluster"
+  kubernetes.core.k8s_info:
+    kind: Pod
+    api_version: v1
+    host: "{{ openshift_api_url }}"
+    api_key: "{{ managed_cluster_auth_results['openshift_auth']['api_key'] }}"
+    validate_certs: no # Ajuste
+    namespace: "" # Obter de todos os namespaces
+  register: all_pods_direct_after
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (AFTER - Direct): Filter problematic pods locally (based on phase and container status)"
+  set_fact:
+    # Filtrar por fases problemáticas e status de container
+    pods_problematicos_pos: >-
+      {{
+        all_pods_direct_after.resources
+        | json_query(
+          '[?
+            status.phase==`Failed`
+            || status.phase==`Unknown`
+            || status.phase==`Pending`
+            || (status.containerStatuses[?
+               state.waiting != null # Container Waiting (ex: ImagePullBackOff)
+               ||
+               (state.terminated != null && state.terminated.exitCode != `0`) # Container Terminated com erro
+             ] | length > 0) # Se houver pelo menos um container com problema
+           ]'
+        )
+      }}
+  delegate_to: localhost
+
+- name: "CAPTURE STATE (AFTER - Direct): Save problematic pods list locally"
+  ansible.builtin.copy:
+    content: "{{ pods_problematicos_pos | to_nice_yaml }}"
+    dest: "/tmp/snapshots/{{ cluster_name }}/after/problematic_pods.yaml"
+    mode: '0644'
+  when: pods_problematicos_pos | length > 0 # Salva o arquivo apenas se a lista não estiver vazia
+  delegate_to: localhost
+
+ * aro-upgrade/roles/health_check_pos_upgrade/tasks/upload_post_upgrade_state.yml: Similar ao upload pré-upgrade.
+   ---
+# Task to upload the captured post-upgrade state (snapshots and data) from local temp to Azure Blob Storage.
+
+# Assumes cluster_name, azure_storage_account_name, azure_storage_container_name, azure_storage_key are provided.
+# Assumes snapshots were saved locally to /tmp/snapshots/{{ cluster_name }}/after/
+
+- name: Upload collected post-upgrade snapshots and data to Azure Blob
+  vars:
+    local_snapshot_dir: "/tmp/snapshots/{{ cluster_name }}/after"
+  block:
+    - name: Find all snapshot files locally
+      ansible.builtin.find:
+        paths: "{{ local_snapshot_dir }}"
+        patterns: "*.yaml"
+        recurse: no
+      register: local_snapshot_files
+      delegate_to: localhost
+
+    - name: Upload each snapshot file to Azure Blob
+      azure.azcollection.azure_blob:
+        account_name: "{{ azure_storage_account_name }}"
+        container_name: "{{ azure_storage_container_name }}"
+        blob: "{{ cluster_name }}/after/{{ item | basename }}" # Caminho no bucket: <cluster_name>/after/<filename>.yaml
+        src: "{{ item }}" # Caminho local do arquivo
+        state: present
+        mode: upload
+        storage_account_key: "{{ azure_storage_key }}" # USE VAULT!
+      loop: "{{ local_snapshot_files.files | map(attribute='path') }}"
+      delegate_to: localhost
+
+    - name: Clean up local post-upgrade snapshot directory
+      ansible.builtin.file:
+        path: "{{ local_snapshot_dir }}"
+        state: absent
+      delegate_to: localhost
+
+ * Crie arquivos vazios para as outras tarefas de check (check_nodes_pos.yml, check_clusters_operators_pos.yml, check_mcps_pos.yml, check_pods_pos.yml, check_pv_and_pvc_pos.yml, report_pos.yml). Implementaremos seu conteúdo nos próximos passos.
+ * Crie arquivos vazios para as tarefas de restauração (return_mcps.yml, return_pdbs.yml).
+ * Crie os arquivos meta, defaults, vars, handlers e README para a role health_check_pos_upgrade:
+   * aro-upgrade/roles/health_check_pos_upgrade/meta/main.yml:
+     galaxy_info:
+  author: Your Name
+  description: Role to perform post-upgrade health checks and capture final state
+  company: Your Company
+
+  license: license (GPL-2.0-or-later, MIT, etc)
+
+  min_ansible_version: 2.12
+
+  galaxy_tags:
+    - kubernetes
+    - openshift
+    - healthcheck
+
+dependencies:
+  - name: openshift.redhat # Para autenticação e módulos K8s/OpenShift
+    version: "*"
+  - name: kubernetes.core # Para módulos K8s
+    version: "*"
+  - name: azure.azcollection # Para Azure Blob Storage
+    version: "*"
+
+   * aro-upgrade/roles/health_check_pos_upgrade/defaults/main.yml:
+     ---
+# Default variables for health_check_pos_upgrade role
+
+# Managed Cluster connection details (from ACM inventory or higher level vars) - SHOULD BE OVERRIDDEN VIA AAP
+# openshift_api_url: "https://api.replace_with_cluster_name:6443" # SUBSTITUIR COM VALOR SEGURO NO AAP
+# cluster_user: "replace_with_user" # SUBSTITUIR COM VALOR SEGURO NO AAP
+# cluster_pass: "replace_with_pass" # SUBSTITUIR COM VALOR SEGURO NO AAP - USE VAULT!!!
+
+# Cluster Name (from ACM inventory or higher level vars) - SHOULD BE OVERRIDDEN
+# cluster_name: "replace_with_cluster_name"
+
+# Azure Blob Storage Configuration - OVERRIDE THESE SECURELY VIA AAP
+# azure_storage_account_name: "seusuanomedeconta" # SUBSTITUIR COM VALOR SEGURO NO AAP
+# azure_storage_container_name: "seucontainerdesnapshots" # SUBSTITUIR COM VALOR SEGURO NO AAP
+# azure_storage_key: "suachaveouSAS" # SUBSTITUIR COM VALOR SEGURO NO AAP - USAR VAULT!!!
+
+# Upgrade Configuration - SHOULD BE OVERRIDDEN
+# desired_version: "4.15" # Versão alvo do upgrade
+# update_channel: "stable" # Canal de upgrade (ex: stable, eus)
+
+# ... Outras variáveis padrão para checks se necessário
+
+   * aro-upgrade/roles/health_check_pos_upgrade/vars/main.yml: (Vazio)
+   * aro-upgrade/roles/health_check_pos_upgrade/handlers/main.yml: (Vazia)
+   * aro-upgrade/roles/health_check_pos_upgrade/README.md:
+     # health_check_pos_upgrade Role
+
+This role performs a series of health checks on a Red Hat OpenShift/ARO cluster *after* an upgrade has been completed. It connects directly to the managed cluster's API to gather data, captures a final snapshot of the cluster's state, and uploads it to Azure Blob Storage. It also orchestrates the comparison with the pre-upgrade state.
+
+**Requirements:**
+
+* Access to the Managed Cluster API (`openshift_api_url`, `cluster_user`, `cluster_pass`).
+* Azure Blob Storage configuration (`azure_storage_account_name`, `azure_storage_container_name`, `azure_storage_key`).
+* Dependent roles: `in_place_state_comparator`.
+* Ansible collections: `openshift.redhat`, `kubernetes.core`, `azure.azcollection`.
+
+**Role Variables:**
+
+* `cluster_name` (Required): The name of the managed cluster being checked.
+* `openshift_api_url` (Required): The API URL of the managed cluster.
+* `cluster_user` (Required): Username for the managed cluster.
+* `cluster_pass` (Required): Password for the managed cluster (USE VAULT).
+* `azure_storage_account_name` (Required): Azure Storage Account name.
+* `azure_storage_container_name` (Required): Azure Blob Container name.
+* `azure_storage_key` (Required): Azure Storage Account Key or SAS Token (USE VAULT).
+* `desired_version` (Required): Target OCP/ARO version for the upgrade.
+* `update_channel` (Required): OCP/ARO update channel.
+
+**Tasks Performed:**
+
+1.  Authenticates to the managed cluster API.
+2.  Captures detailed resource states directly from the cluster API and saves them locally.
+3.  Uploads the local snapshot files and data to Azure Blob Storage.
+4.  Performs various post-upgrade health checks.
+5.  Restores original configurations (PDBs, MCPs).
+6.  **Calls `in_place_state_comparator` role** to compare pre/post snapshots and generate a detailed report.
+
+**Dependencies:**
+
+* Depends on `in_place_state_comparator` role.
+
+Passo 4: Criar a Role in_place_state_comparator (Comparação e Relatório HTML)
+Esta role será a peça central do "depara". Ela fará o download dos snapshots "antes" e "depois" do Azure Blob, realizará a comparação e gerará um relatório HTML detalhado que será enviado de volta para o blob.
+Crie a seguinte estrutura de pastas para a nova role dentro de aro-upgrade/roles:
+cd aro-upgrade/roles
+mkdir -p in_place_state_comparator/{tasks,meta,defaults,vars,templates}
+
+Agora, preencha o conteúdo dos arquivos desta role.
+ * aro-upgrade/roles/in_place_state_comparator/tasks/main.yml:
+   ---
+# Main tasks for the in_place_state_comparator role.
+# This role orchestrates the comparison of before and after snapshots
+# and generates a detailed HTML report.
+
+# Assumes cluster_name, azure_storage_account_name, azure_storage_container_name, azure_storage_key are provided.
+
+- name: "COMPARATOR: Define paths for snapshots in Azure Blob"
+  set_fact:
+    snapshot_bucket_path_before: "{{ cluster_name }}/before"
+    snapshot_bucket_path_after: "{{ cluster_name }}/after"
+    report_bucket_path: "{{ cluster_name }}/reports" # Onde o relatório final será salvo no bucket
+  delegate_to: localhost
+
+- name: "COMPARATOR: Initialize differences structure"
+  set_fact:
+    comparison_results: {}
+  delegate_to: localhost
+
+- name: "COMPARATOR: Define list of resource types to compare and their file names"
+  set_fact:
+    resources_to_compare_files:
+      - name: deployments
+        kind: Deployment
+        api_version: apps/v1
+      - name: statefulsets
+        kind: StatefulSet
+        api_version: apps/v1
+      - name: daemonsets
+        kind: DaemonSet
+        api_version: apps/v1
+      - name: services
+        kind: Service
+        api_version: v1
+      - name: routes
+        kind: Route
+        api_version: route.openshift.io/v1
+      - name: hpas
+        kind: HorizontalPodAutoscaler
+        api_version: autoscaling/v2 # Verifique apiVersion correta para sua versão OCP/ARO
+      - name: clusteroperators
+        kind: ClusterOperator
+        api_version: config.openshift.io/v1
+      - name: machineconfigpools
+        kind: MachineConfigPool
+        api_version: machineconfiguration.openshift.io/v1
+      - name: nodes
+        kind: Node
+        api_version: v1
+      # Adicionar outros tipos relevantes (mesmos que nos snapshots)
+      - name: configmaps
+        kind: ConfigMap
+        api_version: v1
+      - name: pvcs
+        kind: PersistentVolumeClaim
+        api_version: v1
+      - name: pvs
+        kind: PersistentVolume
+        api_version: v1
+  delegate_to: localhost
+
+- name: "COMPARATOR: Process and compare each resource type from bucket snapshots"
+  ansible.builtin.include_tasks: compare_resources.yml
+  loop: "{{ resources_to_compare_files }}"
+  loop_control:
+    loop_var: resource_info # Passa info completa do recurso para o include
+  delegate_to: localhost
+
+- name: "COMPARATOR: Load problematic pods lists from Azure Blob"
+  block:
+    - name: Download pre-upgrade problematic pods list
+      azure.azcollection.azure_blob:
+        account_name: "{{ azure_storage_account_name }}"
+        container_name: "{{ azure_storage_container_name }}"
+        blob: "{{ cluster_name }}/before/problematic_pods.yaml"
+        dest: "/tmp/{{ cluster_name }}_before_problematic_pods.yaml"
+        state: prese
