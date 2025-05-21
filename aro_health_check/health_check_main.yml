@@ -1,0 +1,13 @@
+# health_check_main.yml
+- name: ARO Health Check Orchestrator
+  hosts: localhost 
+  gather_facts: false 
+  connection: local   
+
+  vars_files:
+    - vars/resource_definitions.yml 
+
+  vars:
+    # Use _cli para evitar conflito com possíveis facts com o mesmo nome
+    cluster_name: "{{ cluster_name_cli | default('default_aro_cluster') }}" 
+    execution_
