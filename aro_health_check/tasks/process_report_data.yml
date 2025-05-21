@@ -2,31 +2,24 @@
 - name: Initialize enriched results and executive summary structure
   ansible.builtin.set_fact:
     enriched_comparison_results: []
-    # Esta estrutura será preenchida pela task incluída no loop
     executive_summary_data:
       cluster_operators: { antes: [], depois: [] }
       deployments: { antes_total: 0, antes_problematic: 0, depois_total: 0, depois_problematic: 0 }
       pods: { antes_problematic_count: 0, depois_problematic_count: 0 }
 
-- name: "Process and Enrich Data for Report (Looping through {{ (comparison_results | default([])) | length }} items)"
-  ansible.builtin.include_tasks: process_report_data_item.yml # Nova task incluída
-  loop: "{{ comparison_results | default([]) }}" # Loop sobre os resultados da comparação
-  loop_control:
-    loop_var: comp_item # Variável para cada item do loop
-    label: "Processing item: {{ comp_item.kind }} - {{ comp_item.file }}"
-  when: comparison_results is defined and comparison_results | length > 0
-  vars:
-    # Estas variáveis globais/passadas também estarão disponíveis no arquivo incluído
-    # snapshot_dir_before: "{{ snapshot_base_dir }}/{{ cluster_name }}/antes_upgrade" (já deve estar definido)
-    # snapshot_dir_after: "{{ snapshot_base_dir }}/{{ cluster_name }}/depois_upgrade" (já deve estar definido)
-    # executive_summary_data e enriched_comparison_results serão atualizados pelo include_tasks
-    noop: "" # Placeholder para garantir que a seção vars seja válida
+# ADICIONE ESTA TASK DE DEBUG AQUI:
+- name: "DEBUG: Conteúdo de comparison_results ANTES do loop"
+  ansible.builtin.debug:
+    var: comparison_results
+    verbosity: 2 # Tenta mostrar a estrutura completa, mesmo que profunda
 
-# As tasks para finalizar os sumários (se necessárias) podem vir depois do loop,
-# ou a lógica de sumarização final pode ser feita diretamente no template Jinja2
-# com base nos dados coletados em executive_summary_data e enriched_comparison_results.
-# Por exemplo:
-# - name: "Debug Final Executive Summary Data"
-#   ansible.builtin.debug:
-#     var: executive_summary_data
-#     verbosity: 1
+- name: "Process and Enrich Data for Report (STATIC NAME FOR DEBUG)" # NOME SIMPLIFICADO
+  ansible.builtin.include_tasks: process_report_data_item.yml
+  loop: "{{ comparison_results | default([]) }}" # Expressão suspeita
+  loop_control:
+    loop_var: comp_item
+    label: "Processing Kind: {{ comp_item.kind | default('DESCONHECIDO') }}" # Label simplificado
+  # Condição 'when' mais segura para evitar erro se comparison_results for undefined antes do default
+  when: (comparison_results | default([]) | length > 0)
+  vars:
+    noop: ""
