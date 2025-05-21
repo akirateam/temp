@@ -1,13 +1,12 @@
 # tasks/process_single_resource_comparison.yml
-# Este arquivo processa a comparação para um único tipo de recurso.
 
 - name: "Setup facts for {{ current_resource_def.kind }} comparison"
   ansible.builtin.set_fact:
     resource_file_name_comp: "{{ (current_resource_def.filename_override | default(current_resource_def.kind | lower + '.yml')) }}"
     file_path_before: "{{ snapshot_dir_before }}/{{ (current_resource_def.filename_override | default(current_resource_def.kind | lower + '.yml')) }}"
     file_path_after: "{{ snapshot_dir_after }}/{{ (current_resource_def.filename_override | default(current_resource_def.kind | lower + '.yml')) }}"
-    current_comp_result: {} # Inicializa o resultado para este recurso
-    resource_diff_text: "Nenhum diff gerado ou aplicável." # Inicializa para evitar erros se não for definido depois
+    current_comp_result: {}
+    resource_diff_text: "Nenhum diff gerado ou aplicável."
 
 - name: "Check existence of {{ current_resource_def.kind }} snapshot files"
   ansible.builtin.stat:
@@ -22,9 +21,9 @@
     before_exists: "{{ resource_files_stat.results[0].stat.exists }}"
     after_exists: "{{ resource_files_stat.results[1].stat.exists }}"
 
-# Bloco principal para processar a comparação do recurso atual
 - name: "Process comparison for {{ current_resource_def.kind }}"
   block:
+    # ... (Tasks 'Handle ADDED' e 'Handle REMOVED' permanecem as mesmas) ...
     - name: "Handle ADDED: {{ current_resource_def.kind }}"
       when: not before_exists and after_exists
       ansible.builtin.set_fact:
@@ -44,7 +43,7 @@
           diff: "Recurso não encontrado no snapshot 'depois_upgrade'."
 
     - name: "Handle UNCHANGED or MODIFIED: {{ current_resource_def.kind }}"
-      when: before_exists and after_exists # Só processa se ambos os arquivos existirem
+      when: before_exists and after_exists
       block:
         - name: "Slurp content of {{ current_resource_def.kind }} files for comparison"
           ansible.builtin.slurp:
@@ -53,24 +52,23 @@
             - "{{ file_path_before }}"
             - "{{ file_path_after }}"
           register: slurped_files
-          ignore_errors: true # Permite continuar se um arquivo não puder ser lido
+          ignore_errors: true
 
         - name: Decode slurped content
           ansible.builtin.set_fact:
             content_before: "{{ slurped_files.results[0].content | default('') | b64decode if not slurped_files.results[0].failed | default(true) else 'ERRO_LEITURA_ANTES' }}"
             content_after: "{{ slurped_files.results[1].content | default('') | b64decode if not slurped_files.results[1].failed | default(true) else 'ERRO_LEITURA_DEPOIS' }}"
 
-        # Bloco para quando o conteúdo é diferente e os arquivos foram lidos
         - name: "Process MODIFIED state for {{ current_resource_def.kind }}"
           when: 
             - content_before != 'ERRO_LEITURA_ANTES'
             - content_after != 'ERRO_LEITURA_DEPOIS'
-            - content_before != content_after # Apenas executa o diff se o conteúdo for realmente diferente
+            - content_before != content_after
           block:
             - name: Create temporary file for 'before' content
               ansible.builtin.tempfile:
                 state: file
-                prefix: "aro_diff_{{ current_resource_def.kind | lower }}_before_"
+                prefix: "aro_diff_{{ current_resource_def.kind | lower | replace('/', '_') }}_before_"
               register: temp_before_file
 
             - name: Write 'before' content to temporary file
@@ -82,7 +80,7 @@
             - name: Create temporary file for 'after' content
               ansible.builtin.tempfile:
                 state: file
-                prefix: "aro_diff_{{ current_resource_def.kind | lower }}_after_"
+                prefix: "aro_diff_{{ current_resource_def.kind | lower | replace('/', '_') }}_after_"
               register: temp_after_file
 
             - name: Write 'after' content to temporary file
@@ -100,18 +98,47 @@
                 "{{ resource_file_name_comp }} (depois)"
               register: script_diff_output
               changed_when: false
-              failed_when: false # Vamos tratar a falha na task 'Set diff text...' com base no rc
+              failed_when: false # Trataremos o rc na task 'Set diff text'
               when:
                 - temp_before_file.path is defined
                 - temp_after_file.path is defined
 
-            # TASK DE DEBUG ADICIONADA AQUI:
-            - name: Debug script_diff_output variable content
-              ansible.builtin.debug:
-                var: script_diff_output
-                verbosity: 2 # Mostra mesmo sem -vvv, para facilitar a depuração
+            # ---- NOVO BLOCO DE DEBUG ----
+            - name: "DEBUG and Save RAW SCRIPT OUTPUT for {{ current_resource_def.kind }}"
+              block:
+                - name: "Debug basic structure of script_diff_output"
+                  ansible.builtin.debug:
+                    msg:
+                      - "Kind: {{ current_resource_def.kind }}"
+                      - "File: {{ resource_file_name_comp }}"
+                      - "script_diff_output.rc: {{ script_diff_output.rc | default('N/A (não definido)') }}"
+                      - "script_diff_output.stdout IS DEFINED: {{ script_diff_output.stdout is defined }}"
+                      - "script_diff_output.stdout LENGTH: {{ script_diff_output.stdout | length if script_diff_output.stdout is defined else 'N/A' }}"
+                      - "script_diff_output.stderr IS DEFINED: {{ script_diff_output.stderr is defined }}"
+                      - "script_diff_output.stderr LENGTH: {{ script_diff_output.stderr | length if script_diff_output.stderr is defined else 'N/A' }}"
+                      - "script_diff_output.failed attribute: {{ script_diff_output.failed | default('N/A (não definido)') }}"
+                      - "script_diff_output.skipped attribute: {{ script_diff_output.skipped | default('N/A (não definido)') }}"
+                      - "script_diff_output.msg attribute: {{ script_diff_output.msg | default('N/A (não definido)') }}"
+                  when: script_diff_output is defined # Se a variável foi registrada
 
-            # TASK 'SET_FACT' ROBUSTA:
+                - name: "Save script_diff_output.stdout to /tmp for manual inspection"
+                  ansible.builtin.copy:
+                    content: "{{ script_diff_output.stdout | default('SCRIPT_STDOUT_NAO_DEFINIDO_OU_VAZIO') }}"
+                    # Crie um nome de arquivo único para evitar sobrescrita e caracteres inválidos
+                    dest: "/tmp/diff_out_{{ cluster_name | default('cluster') }}_{{ current_resource_def.kind | replace('/', '_') }}_{{ resource_file_name_comp | replace('.yml','') }}.txt"
+                  when: script_diff_output is defined and script_diff_output.rc is defined and script_diff_output.rc == 0 and script_diff_output.stdout is defined
+                  ignore_errors: true # Para não parar o playbook se esta escrita falhar
+
+                - name: "Save script_diff_output.stderr to /tmp for manual inspection"
+                  ansible.builtin.copy:
+                    content: "{{ script_diff_output.stderr | default('SCRIPT_STDERR_NAO_DEFINIDO_OU_VAZIO') }}"
+                    dest: "/tmp/diff_err_{{ cluster_name | default('cluster') }}_{{ current_resource_def.kind | replace('/', '_') }}_{{ resource_file_name_comp | replace('.yml','') }}.txt"
+                  when: script_diff_output is defined and script_diff_output.rc is defined and script_diff_output.rc != 0 and script_diff_output.stderr is defined
+                  ignore_errors: true
+              when: script_diff_output is defined # Só executa este bloco se script_diff_output foi registrado
+              ignore_errors: true # Permite que o playbook continue mesmo que este bloco de debug falhe
+            # ---- FIM DO NOVO BLOCO DE DEBUG ----
+
             - name: Set diff text from Python script output
               ansible.builtin.set_fact:
                 resource_diff_text: >-
@@ -122,13 +149,10 @@
                   {% elif script_diff_output is defined and script_diff_output.failed is defined and script_diff_output.failed %}
                   Falha na execução do comando diff: {{ script_diff_output.msg | default('Sem mensagem de erro específica do Ansible.') }}
                   {% elif script_diff_output is defined and script_diff_output.skipped is defined and script_diff_output.skipped %}
-                  Comando para gerar diff foi pulado (verifique as condições 'when' anteriores).
+                  Comando para gerar diff foi pulado.
                   {% else %}
-                  Estado inesperado da variável script_diff_output (pode ter sido pulada ou falhou antes do rc ser definido).
+                  Estado inesperado da variável script_diff_output (script pode não ter rodado ou rc não foi definido). Diff não gerado.
                   {% endif %}
-              # Esta task só deve ser executada se a task do script foi realmente tentada.
-              # A condição 'when: script_diff_output is defined' é um pouco genérica.
-              # Se a task 'command' foi pulada, script_diff_output terá 'skipped: true'.
 
             - name: Set state to Modificado (after attempting diff)
               ansible.builtin.set_fact:
@@ -136,9 +160,8 @@
                   kind: "{{ current_resource_def.kind }}"
                   state: "Modificado"
                   file: "{{ resource_file_name_comp }}"
-                  diff: "{{ resource_diff_text }}" # Usa o fact definido acima
+                  diff: "{{ resource_diff_text }}"
 
-            # Bloco de Limpeza de Arquivos Temporários
             - name: Clean up temporary files after diff
               block:
                 - name: "Clean up temporary 'before' file: {{ temp_before_file.path | default('N/A') }}"
@@ -147,18 +170,17 @@
                     state: absent
                   when: temp_before_file.path is defined
                   ignore_errors: true
-
                 - name: "Clean up temporary 'after' file: {{ temp_after_file.path | default('N/A') }}"
                   ansible.builtin.file:
                     path: "{{ temp_after_file.path }}"
                     state: absent
                   when: temp_after_file.path is defined
                   ignore_errors: true
-              always: true # Garante que a limpeza seja tentada se este bloco for alcançado
-
+              always: true
         # Fim do bloco "Process MODIFIED state"
 
         - name: "Mark {{ current_resource_def.kind }} as UNCHANGED or handle read errors"
+          # ... (task inalterada) ...
           when: 
             - content_before == 'ERRO_LEITURA_ANTES' or 
               content_after == 'ERRO_LEITURA_DEPOIS' or
@@ -171,8 +193,8 @@
               diff: "{{ 'Não foi possível ler um ou ambos os arquivos para comparação.' if content_before == 'ERRO_LEITURA_ANTES' or content_after == 'ERRO_LEITURA_DEPOIS' else '' }}"
 
     # Fim do bloco "Handle UNCHANGED or MODIFIED"
-
     - name: "Handle MISSING from both snapshots: {{ current_resource_def.kind }}"
+      # ... (task inalterada) ...
       when: not before_exists and not after_exists
       ansible.builtin.set_fact:
         current_comp_result:
@@ -181,8 +203,7 @@
           file: "{{ resource_file_name_comp }}"
           diff: "Recurso não capturado em nenhum dos snapshots."
 
-  # Fim do bloco principal "Process comparison"
-  always: # Este 'always' se aplica ao bloco "Process comparison"
+  always:
     - name: Aggregate comparison result for {{ current_resource_def.kind }}
       ansible.builtin.set_fact:
         comparison_results: "{{ comparison_results + [current_comp_result] if current_comp_result.kind is defined else comparison_results }}"
