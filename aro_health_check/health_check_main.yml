@@ -1,13 +1,129 @@
 # health_check_main.yml
 - name: ARO Health Check Orchestrator
-  hosts: localhost 
-  gather_facts: false 
-  connection: local   
+  hosts: localhost # Roda localmente, de onde você tem acesso ao cluster
+  gather_facts: false # Fatos da máquina local não são essenciais aqui, mas setup é usado para data/hora
+  connection: local   # Força conexão local
 
   vars_files:
-    - vars/resource_definitions.yml 
+    - vars/resource_definitions.yml # Carrega a lista de recursos a serem snapshotados
 
   vars:
-    # Use _cli para evitar conflito com possíveis facts com o mesmo nome
-    cluster_name: "{{ cluster_name_cli | default('default_aro_cluster') }}" 
-    execution_
+    # Parâmetros de execução (podem ser passados via -e na linha de comando)
+    # execution_phase: 'antes_upgrade', 'depois_upgrade', ou 'report_only'
+    # cluster_name: 'meu_cluster_aro' (obrigatório para fases de snapshot)
+    # generate_report_after_capture: true (opcional, para gerar relatório logo após 'depois_upgrade')
+
+    # Configurações padrão (podem ser sobrescritas via -e)
+    cluster_name: "{{ cluster_name_cli | default('default_aro_cluster') }}" # Use cluster_name_cli para evitar conflito com facts
+    execution_phase: "{{ execution_phase_cli | default('report_only') }}"
+    generate_report_after_capture: "{{ generate_report_after_capture_cli | default(false) | bool }}"
+
+    # Caminhos base (playbook_dir é o diretório onde health_check_main.yml está)
+    snapshot_base_dir: "{{ playbook_dir }}/snapshots"
+    report_dir: "{{ playbook_dir }}/reports"
+
+    # Diretório de snapshot para a execução atual (antes ou depois)
+    # Define current_snapshot_dir apenas se não estiver em modo 'report_only'
+    current_snapshot_dir: >-
+      {{ snapshot_base_dir + '/' + cluster_name + '/' + execution_phase
+         if execution_phase in ['antes_upgrade', 'depois_upgrade']
+         else '' }}
+
+  pre_tasks:
+    - name: Display initial execution parameters
+      ansible.builtin.debug:
+        msg:
+          - "Fase de Execução Solicitada: {{ execution_phase }}"
+          - "Cluster Alvo: {{ cluster_name }}"
+          - "Diretório Base de Snapshots: {{ snapshot_base_dir }}"
+          - "Diretório de Relatórios: {{ report_dir }}"
+          - "Gerar relatório após captura: {{ generate_report_after_capture }}"
+          - "Snapshot dir para esta execução: {{ current_snapshot_dir if current_snapshot_dir else 'N/A' }}"
+
+    - name: Validate cluster_name for snapshot phases
+      ansible.builtin.fail:
+        msg: "A variável 'cluster_name_cli' (ou 'cluster_name') deve ser definida e não pode ser 'default_aro_cluster' para as fases 'antes_upgrade' ou 'depois_upgrade'."
+      when:
+        - execution_phase in ['antes_upgrade', 'depois_upgrade']
+        - cluster_name == 'default_aro_cluster'
+
+  tasks:
+    # --- Fase de Coleta de Snapshots ('antes_upgrade' ou 'depois_upgrade') ---
+    - name: Execute Snapshot Collection Phase
+      when: execution_phase in ['antes_upgrade', 'depois_upgrade']
+      block:
+        - name: "Ensure main snapshot directory for cluster exists: {{ snapshot_base_dir }}/{{ cluster_name }}"
+          ansible.builtin.file:
+            path: "{{ snapshot_base_dir }}/{{ cluster_name }}"
+            state: directory
+            mode: '0755'
+
+        - name: "Ensure specific phase directory exists: {{ current_snapshot_dir }}"
+          ansible.builtin.file:
+            path: "{{ current_snapshot_dir }}"
+            state: directory
+            mode: '0755'
+
+        - name: Get all namespaces from cluster (para filtrar os definidos pelo usuário)
+          kubernetes.core.k8s_info:
+            kind: Namespace
+            api_version: v1
+          register: all_namespaces_raw
+          ignore_errors: true # Continuar mesmo se houver falha ao listar namespaces
+
+        - name: Filter user-defined namespaces (exclui system, openshift, default, logging)
+          ansible.builtin.set_fact:
+            user_defined_namespaces: >-
+              {{ all_namespaces_raw.resources | default([])
+                 | map(attribute='metadata')
+                 | map(attribute='name')
+                 | select('match', '^(?!openshift-|kube-|default|logging|openshift$|openshift-node$|openshift-infra$|openshift-apiserver$|openshift-controller-manager$|openshift-etcd$|openshift-kube-apiserver$|openshift-kube-controller-manager$|openshift-kube-scheduler$|openshift-operator-lifecycle-manager$|openshift-operators$|openshift-service-ca$|openshift-user-workload-monitoring$).*$')
+                 | list }}
+          when: all_namespaces_raw.resources is defined and not all_namespaces_raw.failed
+
+        - name: Display user-defined namespaces to be processed (use -v to see)
+          ansible.builtin.debug:
+            var: user_defined_namespaces
+            verbosity: 1
+
+        - name: "Include tasks to capture all defined resources for phase: {{ execution_phase }}"
+          ansible.builtin.include_tasks: tasks/capture_resources.yml
+          loop: "{{ resources_to_snapshot }}" # Definido em vars_files
+          loop_control:
+            loop_var: current_resource # Nome da variável para cada item da lista resources_to_snapshot
+          vars:
+            snapshot_dir: "{{ current_snapshot_dir }}" # Passa o diretório de snapshot correto para capture_resources.yml
+            # user_defined_namespaces já está disponível como fact global para esta execução
+
+        - name: Snapshot collection complete for phase '{{ execution_phase }}'
+          ansible.builtin.debug:
+            msg: "Coleta de snapshots para '{{ execution_phase }}' concluída em: {{ current_snapshot_dir }}"
+
+    # --- Fase de Comparação e Geração de Relatório ('report_only' ou após 'depois_upgrade' se 'generate_report_after_capture' for true) ---
+    - name: Execute Comparison and Reporting Phase
+      when: >
+        execution_phase == 'report_only' or
+        (execution_phase == 'depois_upgrade' and generate_report_after_capture)
+      block:
+        - name: "Include tasks to compare snapshots"
+          ansible.builtin.include_tasks: tasks/compare_snapshots.yml
+          vars:
+            # Passando variáveis necessárias para compare_snapshots.yml
+            # cluster_name já é um fact global
+            # snapshot_base_dir já é um fact global
+            # resources_to_snapshot já está carregado de vars_files
+            noop: "" # Placeholder var to ensure vars section is valid
+
+        - name: "Include tasks to generate report"
+          ansible.builtin.include_tasks: tasks/generate_report.yml
+          vars:
+            # Passando variáveis necessárias para generate_report.yml
+            # cluster_name já é um fact global
+            # report_dir já é um fact global
+            # comparison_results é um fact registrado por compare_snapshots.yml
+            # resources_to_snapshot já está carregado
+            noop: "" # Placeholder var
+
+    - name: Health check process finished.
+      ansible.builtin.debug:
+        msg: "Processo de Health Check concluído."
