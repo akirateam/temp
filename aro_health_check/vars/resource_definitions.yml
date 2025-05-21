@@ -1,0 +1,31 @@
+# vars/resource_definitions.yml
+resources_to_snapshot:
+  # Recursos Cluster-Scoped ou que listamos globalmente
+  - { kind: Namespace, api_version: v1, namespaced: false, filename_override: 'namespaces.yml' }
+  - { kind: ClusterOperator, api_version: config.openshift.io/v1, namespaced: false }
+  - { kind: MachineConfigPool, api_version: machineconfiguration.openshift.io/v1, namespaced: false }
+  - { kind: Node, api_version: v1, namespaced: false }
+  - { kind: PersistentVolume, api_version: v1, namespaced: false }
+  - { kind: StorageClass, api_version: storage.k8s.io/v1, namespaced: false }
+  - { kind: ClusterRole, api_version: rbac.authorization.k8s.io/v1, namespaced: false }
+  - { kind: ClusterRoleBinding, api_version: rbac.authorization.k8s.io/v1, namespaced: false }
+  - { kind: IngressController, api_version: operator.openshift.io/v1, namespaced: false, filename_override: 'ingresscontrollers.yml'}
+
+  # Recursos Namespaced
+  - { kind: Deployment, api_version: apps/v1, namespaced: true }
+  - { kind: StatefulSet, api_version: apps/v1, namespaced: true }
+  - { kind: DaemonSet, api_version: apps/v1, namespaced: true }
+  - { kind: Pod, api_version: v1, namespaced: true }
+  - { kind: Service, api_version: v1, namespaced: true }
+  - { kind: Route, api_version: route.openshift.io/v1, namespaced: true }
+  - { kind: Ingress, api_version: networking.k8s.io/v1, namespaced: true }
+  - { kind: HorizontalPodAutoscaler, api_version: autoscaling/v2, namespaced: true }
+  - { kind: ConfigMap, api_version: v1, namespaced: true }
+  - { kind: PersistentVolumeClaim, api_version: v1, namespaced: true }
+  - { kind: NetworkPolicy, api_version: networking.k8s.io/v1, namespaced: true }
+  - { kind: Role, api_version: rbac.authorization.k8s.io/v1, namespaced: true }
+  - { kind: RoleBinding, api_version: rbac.authorization.k8s.io/v1, namespaced: true }
+  - { kind: ServiceAccount, api_version: v1, namespaced: true }
+  - { kind: Job, api_version: batch/v1, namespaced: true }
+  - { kind: CronJob, api_version: batch/v1, namespaced: true }
+  - { kind: PodDisruptionBudget, api_version: policy/v1, namespaced: true }

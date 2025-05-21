@@ -1,0 +1,105 @@
+# tasks/process_single_resource_comparison.yml
+- name: "Setup facts for {{ current_resource_def.kind }} comparison"
+  ansible.builtin.set_fact:
+    resource_file_name_comp: "{{ (current_resource_def.filename_override | default(current_resource_def.kind | lower + '.yml')) }}"
+    file_path_before: "{{ snapshot_dir_before }}/{{ (current_resource_def.filename_override | default(current_resource_def.kind | lower + '.yml')) }}"
+    file_path_after: "{{ snapshot_dir_after }}/{{ (current_resource_def.filename_override | default(current_resource_def.kind | lower + '.yml')) }}"
+    current_comp_result: {}
+
+- name: "Check existence of {{ current_resource_def.kind }} snapshot files"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - "{{ file_path_before }}"
+    - "{{ file_path_after }}"
+  register: resource_files_stat
+
+- name: "Determine existence flags for {{ current_resource_def.kind }}"
+  ansible.builtin.set_fact:
+    before_exists: "{{ resource_files_stat.results[0].stat.exists }}"
+    after_exists: "{{ resource_files_stat.results[1].stat.exists }}"
+
+- name: "Process comparison for {{ current_resource_def.kind }}"
+  block:
+    - name: "Handle ADDED: {{ current_resource_def.kind }}"
+      when: not before_exists and after_exists
+      ansible.builtin.set_fact:
+        current_comp_result:
+          kind: "{{ current_resource_def.kind }}"
+          state: "Adicionado"
+          file: "{{ resource_file_name_comp }}"
+          diff: "Recurso não existia no snapshot 'antes_upgrade'."
+
+    - name: "Handle REMOVED: {{ current_resource_def.kind }}"
+      when: before_exists and not after_exists
+      ansible.builtin.set_fact:
+        current_comp_result:
+          kind: "{{ current_resource_def.kind }}"
+          state: "Removido"
+          file: "{{ resource_file_name_comp }}"
+          diff: "Recurso não encontrado no snapshot 'depois_upgrade'."
+
+    - name: "Handle UNCHANGED or MODIFIED: {{ current_resource_def.kind }}"
+      when: before_exists and after_exists
+      block:
+        - name: "Slurp content of {{ current_resource_def.kind }} files for comparison"
+          ansible.builtin.slurp:
+            src: "{{ item }}"
+          loop:
+            - "{{ file_path_before }}"
+            - "{{ file_path_after }}"
+          register: slurped_files
+          ignore_errors: true
+
+        - name: Decode slurped content
+          ansible.builtin.set_fact:
+            content_before: "{{ slurped_files.results[0].content | default('') | b64decode if not slurped_files.results[0].failed | default(true) else 'ERRO_LEITURA_ANTES' }}"
+            content_after: "{{ slurped_files.results[1].content | default('') | b64decode if not slurped_files.results[1].failed | default(true) else 'ERRO_LEITURA_DEPOIS' }}"
+
+        - name: "Check if {{ current_resource_def.kind }} is MODIFIED"
+          when: content_before != content_after and content_before != 'ERRO_LEITURA_ANTES' and content_after != 'ERRO_LEITURA_DEPOIS'
+          block:
+            - name: "Generate diff for {{ current_resource_def.kind }}"
+              community.general.diff:
+                before_string: "{{ content_before }}"
+                after_string: "{{ content_after }}"
+              register: diff_output
+              ignore_errors: true
+            - ansible.builtin.set_fact:
+                current_comp_result:
+                  kind: "{{ current_resource_def.kind }}"
+                  state: "Modificado"
+                  file: "{{ resource_file_name_comp }}"
+                  diff: "{{ diff_output.diff if not diff_output.failed and diff_output.diff else ('Conteúdo diferente, mas diff vazio.' if not diff_output.failed else 'Erro ao gerar diff.') }}"
+
+        - name: "Mark {{ current_resource_def.kind }} as UNCHANGED"
+          when: content_before == content_after and content_before != 'ERRO_LEITURA_ANTES' and content_after != 'ERRO_LEITURA_DEPOIS'
+          ansible.builtin.set_fact:
+            current_comp_result:
+              kind: "{{ current_resource_def.kind }}"
+              state: "Inalterado"
+              file: "{{ resource_file_name_comp }}"
+              diff: ""
+        
+        - name: "Handle read error for {{ current_resource_def.kind }}"
+          when: content_before == 'ERRO_LEITURA_ANTES' or content_after == 'ERRO_LEITURA_DEPOIS'
+          ansible.builtin.set_fact:
+            current_comp_result:
+              kind: "{{ current_resource_def.kind }}"
+              state: "Erro de Leitura"
+              file: "{{ resource_file_name_comp }}"
+              diff: "Erro ao ler um ou ambos os arquivos de snapshot."
+
+    - name: "Handle MISSING from both snapshots: {{ current_resource_def.kind }}"
+      when: not before_exists and not after_exists
+      ansible.builtin.set_fact:
+        current_comp_result:
+          kind: "{{ current_resource_def.kind }}"
+          state: "Não encontrado em ambos snapshots"
+          file: "{{ resource_file_name_comp }}"
+          diff: "Recurso não capturado em nenhum dos snapshots."
+
+  always:
+    - name: Aggregate comparison result for {{ current_resource_def.kind }}
+      ansible.builtin.set_fact:
+        comparison_results: "{{ comparison_results + [current_comp_result] if current_comp_result.kind is defined else comparison_results }}"

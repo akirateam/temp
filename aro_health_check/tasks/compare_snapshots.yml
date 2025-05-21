@@ -1,0 +1,38 @@
+# tasks/compare_snapshots.yml
+- name: Initialize comparison facts
+  ansible.builtin.set_fact:
+    comparison_results: [] # Será populado por process_single_resource_comparison.yml
+    snapshot_dir_before: "{{ snapshot_base_dir }}/{{ cluster_name }}/antes_upgrade"
+    snapshot_dir_after: "{{ snapshot_base_dir }}/{{ cluster_name }}/depois_upgrade"
+
+- name: Check if 'antes_upgrade' snapshot directory exists
+  ansible.builtin.stat:
+    path: "{{ snapshot_dir_before }}"
+  register: dir_before_stat
+
+- name: Assert 'antes_upgrade' directory existence
+  ansible.builtin.assert:
+    that:
+      - dir_before_stat.stat.exists
+      - dir_before_stat.stat.isdir
+    fail_msg: "Diretório de snapshot '{{ snapshot_dir_before }}' não encontrado. Execute a fase 'antes_upgrade' primeiro."
+    quiet: true
+
+- name: Check if 'depois_upgrade' snapshot directory exists
+  ansible.builtin.stat:
+    path: "{{ snapshot_dir_after }}"
+  register: dir_after_stat
+
+- name: Assert 'depois_upgrade' directory existence
+  ansible.builtin.assert:
+    that:
+      - dir_after_stat.stat.exists
+      - dir_after_stat.stat.isdir
+    fail_msg: "Diretório de snapshot '{{ snapshot_dir_after }}' não encontrado. Execute a fase 'depois_upgrade' primeiro."
+    quiet: true
+
+- name: Iterate over defined resources for comparison
+  ansible.builtin.include_tasks: process_single_resource_comparison.yml
+  loop: "{{ resources_to_snapshot }}"
+  loop_control:
+    loop_var: current_resource_def

@@ -1,0 +1,48 @@
+# tasks/capture_resources.yml
+- name: "Setup facts for {{ current_resource.kind }} capture"
+  ansible.builtin.set_fact:
+    resource_file_name: "{{ (current_resource.filename_override | default(current_resource.kind | lower + '.yml')) }}"
+    is_namespaced_resource: "{{ current_resource.namespaced | default(true) }}"
+
+- name: "Capture CLUSTER-SCOPED resource: {{ current_resource.kind }}"
+  when: not is_namespaced_resource
+  block:
+    - name: "Get {{ current_resource.kind }} (cluster-scoped)"
+      kubernetes.core.k8s_info:
+        kind: "{{ current_resource.kind }}"
+        api_version: "{{ current_resource.api_version }}"
+      register: captured_data
+      ignore_errors: true
+
+    - name: "Save {{ current_resource.kind }} (cluster-scoped) to {{ snapshot_dir }}/{{ resource_file_name }}"
+      ansible.builtin.copy:
+        content: "{{ captured_data.resources | default([]) | to_nice_yaml }}"
+        dest: "{{ snapshot_dir }}/{{ resource_file_name }}"
+        mode: '0644'
+      when:
+        - not captured_data.failed | default(false) # Check if 'failed' key exists and is true
+        - captured_data.resources is defined
+        - captured_data.resources | length > 0
+
+- name: "Capture NAMESPACED resource: {{ current_resource.kind }}"
+  when: is_namespaced_resource
+  block:
+    - name: "Get {{ current_resource.kind }} from user-defined namespaces"
+      kubernetes.core.k8s_info:
+        kind: "{{ current_resource.kind }}"
+        api_version: "{{ current_resource.api_version }}"
+        namespace: "{{ item }}"
+      loop: "{{ user_defined_namespaces }}"
+      loop_control:
+        loop_var: item
+      register: captured_data_per_ns
+      ignore_errors: true
+
+    - name: "Aggregate and save {{ current_resource.kind }} (namespaced) to {{ snapshot_dir }}/{{ resource_file_name }}"
+      ansible.builtin.copy:
+        content: "{{ captured_data_per_ns.results | rejectattr('failed', 'defined') | rejectattr('resources', 'undefined') | map(attribute='resources') | flatten | list | to_nice_yaml }}"
+        dest: "{{ snapshot_dir }}/{{ resource_file_name }}"
+        mode: '0644'
+      when: >
+        captured_data_per_ns.results is defined and
+        (captured_data_per_ns.results | rejectattr('failed', 'defined') | rejectattr('resources', 'undefined') | map(attribute='resources') | flatten | list | length > 0)

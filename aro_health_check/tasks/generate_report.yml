@@ -1,0 +1,39 @@
+# tasks/generate_report.yml
+- name: Get current time for report metadata
+  ansible.builtin.setup:
+    filter: ansible_date_time
+  when: ansible_date_time is not defined
+
+- name: Set report generation time fact
+  ansible.builtin.set_fact:
+    report_generation_time_var: "{{ ansible_facts.date_time.iso8601 if ansible_facts.date_time is defined else 'N/A' }}"
+
+- name: Create reports directory if it does not exist
+  ansible.builtin.file:
+    path: "{{ report_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: "Include tasks to process and enrich data for the report"
+  ansible.builtin.include_tasks: process_report_data.yml
+  vars:
+    # Vars for process_report_data.yml
+    comparison_results: "{{ comparison_results }}" # From compare_snapshots.yml
+    snapshot_dir_before: "{{ snapshot_base_dir }}/{{ cluster_name }}/antes_upgrade"
+    snapshot_dir_after: "{{ snapshot_base_dir }}/{{ cluster_name }}/depois_upgrade"
+
+- name: Generate HTML report from template
+  ansible.builtin.template:
+    src: ../templates/report_template.html.j2
+    dest: "{{ report_dir }}/health_report_{{ cluster_name }}.html"
+    mode: '0644'
+  vars:
+    # Vars for template:
+    # enriched_comparison_results (from process_report_data.yml)
+    # executive_summary_data (from process_report_data.yml)
+    # cluster_name (global)
+    report_generation_time: "{{ report_generation_time_var }}"
+
+- name: Display report location
+  ansible.builtin.debug:
+    msg: "Relatório de Health Check gerado em: {{ report_dir }}/health_report_{{ cluster_name }}.html"

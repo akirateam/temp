@@ -1,0 +1,107 @@
+# tasks/process_report_data.yml
+- name: Initialize enriched results and executive summary structure
+  ansible.builtin.set_fact:
+    enriched_comparison_results: []
+    executive_summary_data:
+      cluster_operators: { antes: [], depois: [] } # Lista de {name, degraded, available, progressing}
+      deployments: { antes_total: 0, antes_problematic: 0, depois_total: 0, depois_problematic: 0 }
+      pods: { antes_problematic_count: 0, depois_problematic_count: 0 }
+
+- name: "Process and Enrich Data for Report ({{ comparison_results | length }} items)"
+  when: comparison_results is defined and comparison_results | length > 0
+  loop: "{{ comparison_results }}"
+  loop_control:
+    loop_var: comp_item
+    label: "{{ comp_item.kind }} - {{ comp_item.file }}"
+  block:
+    - name: "Initialize data holders for item: {{ comp_item.kind }}"
+      ansible.builtin.set_fact:
+        data_before_parsed_list: []
+        data_after_parsed_list: []
+        current_details: {}
+
+    # --- Load 'BEFORE' YAML content ---
+    - name: "Load 'before' YAML for {{ comp_item.kind }}: {{ comp_item.file }}"
+      when: comp_item.state != 'Adicionado' and comp_item.state != 'Não encontrado em ambos snapshots' and comp_item.state != 'Erro de Leitura'
+      ansible.builtin.slurp:
+        src: "{{ snapshot_dir_before }}/{{ comp_item.file }}"
+      register: yaml_before_slurped
+      ignore_errors: true
+
+    - name: "Parse 'before' YAML for {{ comp_item.kind }}"
+      when: not yaml_before_slurped.failed | default(true) and yaml_before_slurped.content is defined
+      ansible.builtin.set_fact:
+        data_before_parsed_list: "{{ yaml_before_slurped.content | b64decode | from_yaml_all | default([]) }}"
+      ignore_errors: true
+
+    # --- Load 'AFTER' YAML content ---
+    - name: "Load 'after' YAML for {{ comp_item.kind }}: {{ comp_item.file }}"
+      when: comp_item.state != 'Removido' and comp_item.state != 'Não encontrado em ambos snapshots' and comp_item.state != 'Erro de Leitura'
+      ansible.builtin.slurp:
+        src: "{{ snapshot_dir_after }}/{{ comp_item.file }}"
+      register: yaml_after_slurped
+      ignore_errors: true
+
+    - name: "Parse 'after' YAML for {{ comp_item.kind }}"
+      when: not yaml_after_slurped.failed | default(true) and yaml_after_slurped.content is defined
+      ansible.builtin.set_fact:
+        data_after_parsed_list: "{{ yaml_after_slurped.content | b64decode | from_yaml_all | default([]) }}"
+      ignore_errors: true
+
+    # --- Logic to populate executive_summary_data (simplified example) ---
+    # ClusterOperators
+    - name: "Summarize ClusterOperator data for {{ comp_item.kind }}"
+      when: comp_item.kind == 'ClusterOperator'
+      block:
+        - name: Process CO - Antes
+          ansible.builtin.set_fact:
+            executive_summary_data: "{{ executive_summary_data | combine({'cluster_operators': {'antes': executive_summary_data.cluster_operators.antes + co_extracted_list_antes }}, recursive=true) }}"
+          vars:
+            co_extracted_list_antes: >-
+              {{ data_before_parsed_list | map('community.general.json_query', co_query) | list }}
+            co_query: "[].{name: metadata.name, degraded: status.conditions[?type=='Degraded'].status | [0], available: status.conditions[?type=='Available'].status | [0], progressing: status.conditions[?type=='Progressing'].status | [0]}"
+          when: data_before_parsed_list | length > 0
+
+        - name: Process CO - Depois
+          ansible.builtin.set_fact:
+            executive_summary_data: "{{ executive_summary_data | combine({'cluster_operators': {'depois': executive_summary_data.cluster_operators.depois + co_extracted_list_depois }}, recursive=true) }}"
+          vars:
+            co_extracted_list_depois: >-
+              {{ data_after_parsed_list | map('community.general.json_query', co_query) | list }}
+            co_query: "[].{name: metadata.name, degraded: status.conditions[?type=='Degraded'].status | [0], available: status.conditions[?type=='Available'].status | [0], progressing: status.conditions[?type=='Progressing'].status | [0]}"
+          when: data_after_parsed_list | length > 0
+
+    # Deployments
+    - name: "Summarize Deployment data for {{ comp_item.kind }}"
+      when: comp_item.kind == 'Deployment'
+      block:
+        - name: Process Deployments - Antes
+          ansible.builtin.set_fact:
+            executive_summary_data: "{{ executive_summary_data | combine({'deployments': {'antes_total': executive_summary_data.deployments.antes_total + data_before_parsed_list | length, 'antes_problematic': executive_summary_data.deployments.antes_problematic + (data_before_parsed_list | selectattr('spec.replicas', 'notequalto', item.status.readyReplicas | default(0)) | list | length) }}, recursive=true) }}"
+          when: data_before_parsed_list | length > 0
+        - name: Process Deployments - Depois
+          ansible.builtin.set_fact:
+            executive_summary_data: "{{ executive_summary_data | combine({'deployments': {'depois_total': executive_summary_data.deployments.depois_total + data_after_parsed_list | length, 'depois_problematic': executive_summary_data.deployments.depois_problematic + (data_after_parsed_list | selectattr('spec.replicas', 'notequalto', item.status.readyReplicas | default(0)) | list | length) }}, recursive=true) }}"
+          when: data_after_parsed_list | length > 0
+
+    # Pods
+    - name: "Summarize Pod data for {{ comp_item.kind }}"
+      when: comp_item.kind == 'Pod'
+      block:
+        - name: Process Pods - Antes
+          ansible.builtin.set_fact:
+            executive_summary_data: "{{ executive_summary_data | combine({'pods': {'antes_problematic_count': executive_summary_data.pods.antes_problematic_count + (data_before_parsed_list | rejectattr('status.phase', 'in', ['Running', 'Succeeded']) | list | length) }}, recursive=true) }}"
+          when: data_before_parsed_list | length > 0
+        - name: Process Pods - Depois
+          ansible.builtin.set_fact:
+            executive_summary_data: "{{ executive_summary_data | combine({'pods': {'depois_problematic_count': executive_summary_data.pods.depois_problematic_count + (data_after_parsed_list | rejectattr('status.phase', 'in', ['Running', 'Succeeded']) | list | length) }}, recursive=true) }}"
+          when: data_after_parsed_list | length > 0
+
+    # --- Assemble final enriched item (with parsed data for template) ---
+    - name: "Assemble final enriched item for {{ comp_item.kind }}"
+      ansible.builtin.set_fact:
+        enriched_item_final: "{{ comp_item | combine({'data_before': data_before_parsed_list, 'data_after': data_after_parsed_list, 'details': current_details }) }}"
+
+    - name: Append to enriched_comparison_results
+      ansible.builtin.set_fact:
+        enriched_comparison_results: "{{ enriched_comparison_results + [enriched_item_final] }}"
