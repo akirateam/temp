@@ -1,0 +1,34 @@
+# tasks/collect_namespace_snapshots.yml
+# Chamado com loop_var: current_namespace
+# Vars esperadas: current_phase_snapshot_dir, resource_kinds_to_collect
+
+- name: "Criar diretório para o namespace {{ current_namespace }} na fase {{ execution_phase }}"
+  ansible.builtin.file:
+    path: "{{ current_phase_snapshot_dir }}/{{ current_namespace }}"
+    state: directory
+    mode: '0755'
+
+- name: "Coletar {{ item.kind }} do namespace {{ current_namespace }}"
+  kubernetes.core.k8s_info:
+    kind: "{{ item.kind }}"
+    api_version: "{{ item.api_version }}"
+    namespace: "{{ current_namespace }}"
+    # label_selectors: (opcional, se precisar filtrar mais)
+  register: k8s_resources_raw
+  loop: "{{ resource_kinds_to_collect }}" # Loop sobre os kinds definidos em vars
+  loop_control:
+    label: "Coletando {{ item.kind }} em {{ current_namespace }}"
+  ignore_errors: true # Continua se um kind não existir ou não houver permissão
+
+- name: "Salvar {{ item.item.kind }} ({{ k8s_resources_raw.resources | default([]) | length }} encontrados) para {{ current_namespace }} em arquivo"
+  ansible.builtin.copy:
+    content: "{{ item.resources | default([]) | to_nice_yaml }}"
+    dest: "{{ current_phase_snapshot_dir }}/{{ current_namespace }}/{{ item.item.kind | lower }}.yml" # Salva como kind.yml
+    mode: '0644'
+  loop: "{{ k8s_resources_raw.results }}" # Loop sobre os resultados da coleta de cada kind
+  when:
+    - not item.failed | default(false)
+    - item.resources is defined
+    # - item.resources | length > 0 # Pode criar arquivos vazios se não houver recursos, o que é ok
+  loop_control:
+    label: "Salvando {{ item.item.kind }} para {{ current_namespace }}"

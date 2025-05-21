@@ -1,0 +1,35 @@
+# tasks/generate_html_report.yml
+# Vars esperadas: analysis_results_file, html_report_file, cluster_name
+
+- name: Ler resultados da análise do arquivo JSON
+  ansible.builtin.slurp:
+    src: "{{ analysis_results_file }}"
+  register: slurped_analysis_results
+
+- name: Decodificar e parsear JSON dos resultados da análise
+  ansible.builtin.set_fact:
+    report_data: "{{ slurped_analysis_results.content | b64decode | from_json }}"
+  when: slurped_analysis_results.content is defined
+
+- name: Get current time for report (se não definido globalmente)
+  ansible.builtin.setup:
+    filter: ansible_date_time
+  register: current_time_setup_report
+  when: report_data.report_time is not defined # O script python já adiciona, mas como fallback
+
+- name: Generate HTML report using template
+  ansible.builtin.template:
+    src: ../templates/report_template.html.j2
+    dest: "{{ html_report_file }}"
+    mode: '0644'
+  vars:
+    # Passa os dados parseados para o template
+    # cluster_name já está disponível das vars do playbook principal
+    # report_time já está dentro de report_data (do script python)
+    # Se precisar de um tempo de geração do template diferente:
+    # template_generation_time: "{{ ansible_facts.date_time.iso8601 if ansible_facts.date_time is defined else 'N/A' }}"
+    data: "{{ report_data }}" # Passa toda a estrutura de dados para o template
+
+- name: Display HTML report location
+  ansible.builtin.debug:
+    msg: "Relatório HTML gerado em: {{ html_report_file }}"

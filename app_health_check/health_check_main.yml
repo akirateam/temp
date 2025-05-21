@@ -1,0 +1,148 @@
+# health_check_main.yml
+- name: Health Check de Aplicações em Namespaces de Negócio ARO
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars_files:
+    - vars/resource_definitions.yml
+
+  vars:
+    # Parâmetros de execução (passar via -e)
+    # execution_phase: 'antes_upgrade', 'depois_upgrade', 'report_only'
+    # cluster_name: 'nome_do_seu_cluster'
+    execution_phase: "{{ execution_phase_cli | default('report_only') }}"
+    cluster_name: "{{ cluster_name_cli | default('default_cluster') }}"
+
+    # Caminhos
+    base_dir: "{{ playbook_dir }}"
+    snapshots_base_dir: "{{ base_dir }}/snapshots/{{ cluster_name }}"
+    reports_dir: "{{ base_dir }}/reports"
+    analysis_results_file: "{{ reports_dir }}/analysis_results_{{ cluster_name }}.json"
+    html_report_file: "{{ reports_dir }}/health_report_{{ cluster_name }}.html"
+
+    # Lista de prefixos de namespaces de sistema/infra para excluir
+    system_namespace_prefixes:
+      - 'openshift-'
+      - 'kube-'
+    # Lista de nomes exatos de namespaces de sistema/infra para excluir
+    system_namespace_exact:
+      - 'default'
+      - 'logging'
+      # Adicione outros aqui, se necessário
+
+  pre_tasks:
+    - name: Validar parâmetros de execução
+      ansible.builtin.fail:
+        msg: "A variável 'cluster_name_cli' deve ser definida e não pode ser 'default_cluster' para as fases de coleta ou relatório."
+      when: cluster_name == 'default_cluster'
+
+    - name: Criar diretório de reports se não existir
+      ansible.builtin.file:
+        path: "{{ reports_dir }}"
+        state: directory
+        mode: '0755'
+      when: execution_phase == 'report_only' # Ou sempre, se preferir
+
+  tasks:
+    # Bloco de Coleta de Snapshots
+    - name: Coletar Snapshots (Fase: {{ execution_phase }})
+      when: execution_phase in ['antes_upgrade', 'depois_upgrade']
+      block:
+        - name: Criar diretório de snapshots para esta fase
+          ansible.builtin.file:
+            path: "{{ snapshots_base_dir }}/{{ execution_phase }}"
+            state: directory
+            mode: '0755'
+
+        - name: Obter todos os namespaces do cluster
+          kubernetes.core.k8s_info:
+            kind: Namespace
+            api_version: v1
+          register: all_namespaces_raw
+
+        - name: Filtrar namespaces de negócio
+          ansible.builtin.set_fact:
+            business_namespaces_list: >-
+              {{ all_namespaces_raw.resources | default([])
+                 | map(attribute='metadata.name')
+                 | reject('in', system_namespace_exact)
+                 | reject('match', '(' + (system_namespace_prefixes | join('|')) + ').*')
+                 | list }}
+          when: all_namespaces_raw.resources is defined
+
+        - name: Exibir namespaces de negócio selecionados (verbose)
+          ansible.builtin.debug:
+            var: business_namespaces_list
+            verbosity: 1
+
+        - name: Falhar se nenhum namespace de negócio for encontrado
+          ansible.builtin.fail:
+            msg: "Nenhum namespace de negócio encontrado após a filtragem. Verifique seus filtros ou o estado do cluster."
+          when: business_namespaces_list is not defined or business_namespaces_list | length == 0
+
+        - name: Coletar recursos para cada namespace de negócio
+          ansible.builtin.include_tasks: tasks/collect_namespace_snapshots.yml
+          loop: "{{ business_namespaces_list }}"
+          loop_control:
+            loop_var: current_namespace
+          vars:
+            current_phase_snapshot_dir: "{{ snapshots_base_dir }}/{{ execution_phase }}"
+
+    # Bloco de Análise e Geração de Relatório
+    - name: Analisar Snapshots e Gerar Relatório
+      when: execution_phase == 'report_only'
+      block:
+        - name: Verificar se diretórios de snapshot 'antes' e 'depois' existem
+          ansible.builtin.stat:
+            path: "{{ snapshots_base_dir }}/{{ item }}"
+          loop:
+            - antes_upgrade
+            - depois_upgrade
+          register: snapshot_dirs_check
+          failed_when: "not item.stat.exists or not item.stat.isdir"
+          vars:
+            # Truque para acessar o item do loop no failed_when
+            item: "{{ snapshot_dirs_check.results[0] if item == 'antes_upgrade' else snapshot_dirs_check.results[1] }}"
+
+        - name: Obter lista de namespaces dos diretórios de snapshot (para consistência)
+          ansible.builtin.find:
+            paths: "{{ snapshots_base_dir }}/antes_upgrade/"
+            file_type: directory
+          register: found_namespaces_before
+
+        - name: Setar lista de namespaces para análise
+          ansible.builtin.set_fact:
+            namespaces_to_analyze: "{{ found_namespaces_before.files | map(attribute='path') | map('basename') | list }}"
+
+        - name: Falhar se não houver namespaces nos snapshots 'antes_upgrade'
+          ansible.builtin.fail:
+            msg: "Nenhum diretório de namespace encontrado em {{ snapshots_base_dir }}/antes_upgrade/"
+          when: namespaces_to_analyze | length == 0
+
+        - name: Executar script Python de análise de snapshots
+          ansible.builtin.command: >
+            python {{ base_dir }}/scripts/analyze_snapshots.py
+            --before_dir "{{ snapshots_base_dir }}/antes_upgrade"
+            --after_dir "{{ snapshots_base_dir }}/depois_upgrade"
+            --namespaces "{{ namespaces_to_analyze | join(',') }}"
+            --kinds_config_path "{{ base_dir }}/vars/resource_definitions.yml"
+            --output_json "{{ analysis_results_file }}"
+            --cluster_name "{{ cluster_name }}"
+          register: analysis_script_result
+          changed_when: true # Assume que a análise sempre "muda" o estado (gera arquivo)
+          failed_when: analysis_script_result.rc != 0
+
+        - name: Exibir saída do script de análise (stdout)
+          ansible.builtin.debug:
+            var: analysis_script_result.stdout
+            verbosity: 1
+        
+        - name: Exibir erros do script de análise (stderr), se houver
+          ansible.builtin.debug:
+            var: analysis_script_result.stderr
+            verbosity: 0 # Mostra sempre
+          when: analysis_script_result.stderr is defined and analysis_script_result.stderr | trim != ""
+
+        - name: Incluir tasks para gerar o relatório HTML
+          ansible.builtin.include_tasks: tasks/generate_html_report.yml

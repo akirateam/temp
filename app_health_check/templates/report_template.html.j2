@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Relatório Health Check Apps ARO - {{ data.cluster_name }}</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f4f7fc; color: #333; font-size: 14px; line-height: 1.6; }
+        .container { max-width: 1400px; margin: 20px auto; padding: 20px; background-color: #fff; box-shadow: 0 4px 8px rgba(0,0,0,0.1); border-radius: 8px; }
+        h1, h2, h3 { color: #2c3e50; margin-top: 0; }
+        h1 { font-size: 28px; text-align: center; border-bottom: 2px solid #3498db; padding-bottom: 15px; margin-bottom: 20px; }
+        h2 { font-size: 22px; border-bottom: 1px solid #bdc3c7; padding-bottom: 10px; margin-top: 30px; margin-bottom: 15px; }
+        h3 { font-size: 18px; color: #34495e; margin-top: 25px; margin-bottom: 10px; background-color: #ecf0f1; padding: 8px; border-left: 4px solid #3498db;}
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+        th, td { border: 1px solid #e0e0e0; padding: 8px 10px; text-align: left; vertical-align: top; word-break: break-word; }
+        th { background-color: #3498db; color: white; font-weight: 600; }
+        .summary-box { background-color: #e9ecef; padding: 15px; border-radius: 5px; margin-bottom: 25px; border-left: 5px solid #2980b9; }
+        .executive-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .summary-card { background-color: #fff; padding: 15px; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.07); border: 1px solid #eee;}
+        .summary-card h4 { margin-top:0; font-size: 16px; color: #2980b9; margin-bottom: 10px; }
+        .summary-card ul { list-style: none; padding-left: 0; margin-bottom: 0;}
+        .summary-card li { margin-bottom: 5px; font-size: 0.9em; }
+        .status-ok { color: #27ae60; font-weight: bold; }
+        .status-problem { color: #c0392b; font-weight: bold; }
+        .status-warning { color: #f39c12; font-weight: bold; }
+        .change-new_problem, .change-new_problem_replicas { background-color: #fdd; } /* Vermelho claro */
+        .change-persistent_problem_no_change, .change-persistent_problem_changed, .change-persistent_problem_replicas_changed { background-color: #ffebcc; } /* Laranja claro */
+        .change-resolved_problem, .change-resolved_problem_replicas { background-color: #ddf8dd; } /* Verde claro */
+        .change-added { background-color: #e0f7fa; } /* Azul claro */
+        .change-removed { background-color: #fce4ec; } /* Rosa claro */
+        .change-modified { background-color: #fff9c4; } /* Amarelo claro */
+        pre.diff-view { background-color: #2b303b; color: #c0c5ce; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; font-family: 'Consolas', 'Monaco', monospace; font-size: 12px; max-height: 300px; overflow-y: auto; }
+        .details-table th { background-color: #eaf2f8; color: #2c3e50; font-size: 0.9em; }
+        .details-table td { font-size: 0.9em; }
+        .collapsible { background-color: #777; color: white; cursor: pointer; padding: 10px; width: 100%; border: none; text-align: left; outline: none; font-size: 15px; margin-top: 10px;}
+        .active, .collapsible:hover { background-color: #555; }
+        .content { padding: 0 18px; max-height: 0; overflow: hidden; transition: max-height 0.2s ease-out; background-color: #f9f9f9; border: 1px solid #ddd; border-top:none; }
+        .icon-ok::before { content: "✔ "; color: green; }
+        .icon-problem::before { content: "✖ "; color: red; }
+        .icon-warning::before { content: "⚠ "; color: orange; }
+        .icon-neutral::before { content: "ℹ️ "; color: blue; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1><span style="font-weight:normal;">Relatório Health Check de Aplicações ARO:</span> {{ data.cluster_name }}</h1>
+        <div class="summary-box">
+            <p><strong>Data do Relatório (Análise):</strong> {{ data.report_time | date:"%Y-%m-%d %H:%M:%S %Z" }}</p>
+            <p><strong>Comparação entre snapshots:</strong> <code>antes_upgrade</code> e <code>depois_upgrade</code></p>
+            <p><strong>Namespaces Analisados:</strong> {{ data.summary.namespaces_analyzed_count }}</p>
+        </div>
+
+        <h2>Sumário Executivo Geral</h2>
+        <div class="executive-summary">
+            <div class="summary-card">
+                <h4><span class="icon-problem"></span>Problemas em Pods</h4>
+                <ul>
+                    <li>Novos Problemas: <span class="{{'status-problem' if data.summary.total_new_pod_issues > 0 else 'status-ok'}}">{{ data.summary.total_new_pod_issues }}</span></li>
+                    <li>Problemas Persistentes: <span class="{{'status-warning' if data.summary.total_persistent_pod_issues > 0 else 'status-ok'}}">{{ data.summary.total_persistent_pod_issues }}</span></li>
+                    <li>Problemas Resolvidos: <span class="status-ok">{{ data.summary.total_resolved_pod_issues }}</span></li>
+                </ul>
+            </div>
+            <div class="summary-card">
+                <h4><span class="icon-problem"></span>Problemas em Deployments/Controladores</h4>
+                <ul>
+                    <li>Novos Problemas (Réplicas): <span class="{{'status-problem' if data.summary.total_new_deployment_issues > 0 else 'status-ok'}}">{{ data.summary.total_new_deployment_issues }}</span></li>
+                    <li>Problemas Persistentes (Réplicas): <span class="{{'status-warning' if data.summary.total_persistent_deployment_issues > 0 else 'status-ok'}}">{{ data.summary.total_persistent_deployment_issues }}</span></li>
+                    <li>Problemas Resolvidos (Réplicas): <span class="status-ok">{{ data.summary.total_resolved_deployment_issues }}</span></li>
+                </ul>
+            </div>
+        </div>
+
+        {% for ns_data in data.namespaces %}
+        <h2 id="ns-{{ ns_data.name }}">Namespace: {{ ns_data.name }} 
+            <span style="font-size: 0.7em; font-weight:normal;">
+                (Status Geral: 
+                {% if ns_data.status_overall == "problems_found" %}<span class="status-problem">Problemas Encontrados</span>
+                {% elif ns_data.status_overall == "changes_only" %}<span class="status-warning">Mudanças Detectadas</span>
+                {% else %}<span class="status-ok">OK</span>
+                {% endif %})
+            </span>
+        </h2>
+        
+        {% set ns_pods = ns_data.resources | selectattr('kind', 'equalto', 'Pod') | list %}
+        {% if ns_pods | length > 0 %}
+        <h3><span class="icon-neutral"></span>Pods ({{ ns_pods | length }})</h3>
+        <table class="details-table">
+            <thead><tr><th>Nome do Pod</th><th>Status Antes</th><th>Restarts Antes</th><th>Status Depois</th><th>Restarts Depois</th><th>Tipo de Mudança</th><th>Detalhes</th></tr></thead>
+            <tbody>
+                {% for pod_res in ns_pods %}
+                <tr class="change-{{ pod_res.change_type }}">
+                    <td>{{ pod_res.name }}</td>
+                    <td>{{ pod_res.details.phase_before | default('N/A') }}</td>
+                    <td>{{ pod_res.details.restarts_before | default('N/A') }}</td>
+                    <td>{{ pod_res.details.phase_after | default('N/A') }}</td>
+                    <td>{{ pod_res.details.restarts_after | default('N/A') }}</td>
+                    <td>{{ pod_res.change_type | replace('_', ' ') | title }}</td>
+                    <td>{{ pod_res.details.summary | default('') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% set ns_deployments = ns_data.resources | selectattr('kind', 'in', ['Deployment', 'StatefulSet', 'DaemonSet']) | list %}
+        {% if ns_deployments | length > 0 %}
+        <h3><span class="icon-neutral"></span>Deployments / StatefulSets / DaemonSets ({{ ns_deployments | length }})</h3>
+        <table class="details-table">
+            <thead><tr><th>Nome</th><th>Kind</th><th>Spec/Ready (Antes)</th><th>Spec/Ready (Depois)</th><th>Tipo de Mudança</th><th>Detalhes</th></tr></thead>
+            <tbody>
+                {% for dep_res in ns_deployments %}
+                <tr class="change-{{ dep_res.change_type }}">
+                    <td>{{ dep_res.name }}</td>
+                    <td>{{ dep_res.kind }}</td>
+                    <td>{{ dep_res.details.spec_replicas_before | default('N/A') }} / {{ dep_res.details.ready_replicas_before | default('N/A') }}</td>
+                    <td>{{ dep_res.details.spec_replicas_after | default('N/A') }} / {{ dep_res.details.ready_replicas_after | default('N/A') }}</td>
+                    <td>{{ dep_res.change_type | replace('_', ' ') | title }}</td>
+                    <td>{{ dep_res.details.summary | default('') }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        {% set ns_other_resources = ns_data.resources | rejectattr('kind', 'in', ['Pod', 'Deployment', 'StatefulSet', 'DaemonSet']) | list %}
+        {% if ns_other_resources | length > 0 %}
+        <h3><span class="icon-neutral"></span>Outros Recursos Modificados/Adicionados/Removidos ({{ ns_other_resources | length }})</h3>
+        <table class="details-table">
+            <thead><tr><th>Kind</th><th>Nome</th><th>Status</th></tr></thead>
+            <tbody>
+                {% for other_res in ns_other_resources if other_res.change_type != 'unchanged' %}
+                <tr class="change-{{ other_res.change_type }}">
+                    <td>{{ other_res.kind }}</td>
+                    <td>{{ other_res.name }}</td>
+                    <td>{{ other_res.change_type | replace('_', ' ') | title }}</td>
+                </tr>
+                {% if other_res.change_type == 'modified' and other_res.raw_diff %}
+                <tr>
+                    <td colspan="3">
+                        <button type="button" class="collapsible">Mostrar/Esconder Diff para {{ other_res.name }}</button>
+                        <div class="content">
+                            <pre class="diff-view">{{ other_res.raw_diff | e }}</pre>
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    {% else %}
+        <p>Nenhum namespace de negócio encontrado ou processado.</p>
+    {% endfor %}
+    </div>
+
+    <script>
+        var coll = document.getElementsByClassName("collapsible");
+        var i;
+        for (i = 0; i < coll.length; i++) {
+            coll[i].addEventListener("click", function() {
+                this.classList.toggle("active");
+                var content = this.nextElementSibling;
+                if (content.style.maxHeight){
+                    content.style.maxHeight = null;
+                } else {
+                    content.style.maxHeight = content.scrollHeight + "px";
+                } 
+            });
+        }
+    </script>
+</body>
+</html>

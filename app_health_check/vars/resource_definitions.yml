@@ -1,0 +1,16 @@
+# vars/resource_definitions.yml
+# Lista de kinds de recursos a serem coletados em cada namespace de negócio.
+# Todos são assumidos como namespaced aqui, pois a coleta será por namespace.
+resource_kinds_to_collect:
+  - { kind: Deployment, api_version: apps/v1 }
+  - { kind: StatefulSet, api_version: apps/v1 }
+  - { kind: DaemonSet, api_version: apps/v1 }
+  - { kind: Pod, api_version: v1 }
+  - { kind: Service, api_version: v1 }
+  - { kind: Route, api_version: route.openshift.io/v1 }
+  - { kind: Ingress, api_version: networking.k8s.io/v1 }
+  - { kind: ConfigMap, api_version: v1 }
+  - { kind: PersistentVolumeClaim, api_version: v1 }
+  - { kind: HorizontalPodAutoscaler, api_version: autoscaling/v2 }
+  - { kind: CronJob, api_version: batch/v1 }
+  - { kind: Job, api_version: batch/v1 }
