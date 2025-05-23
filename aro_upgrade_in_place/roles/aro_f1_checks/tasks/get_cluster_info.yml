@@ -62,6 +62,10 @@
       degraded_operators: "{{ _degraded_operator_names_list }}"
     aro_co_degraded_count: "{{ _degraded_operator_names_list | length }}"
 
+# Em roles/aro_f1_checks/tasks/get_cluster_info.yml
+
+# ... (tasks anteriores para ClusterVersion, ClusterOperators) ...
+
 - name: GET_CLUSTER_INFO | Obter status de todos os Nós (Nodes)
   kubernetes.core.k8s_info:
     kind: Node
@@ -72,40 +76,15 @@
     _temp_nodes_ready_count: 0
     _temp_nodes_not_ready_list: []
 
-- name: GET_CLUSTER_INFO | Iterar sobre Nós para verificar condição 'Ready'
-  vars:
-    # Define a condição de "nó pronto" em uma variável para clareza
-    node_is_actually_ready: >-
-      {{ (item.status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0) }}
-  block:
-    # Task de DEBUG - remova ou comente após o troubleshooting
-    - name: DEBUG | Antes de atualizar contadores/listas de Nós
-      ansible.builtin.debug:
-        msg:
-          - "Processando Nó: {{ item.metadata.name }}"
-          - "Condição 'node_is_actually_ready': {{ node_is_actually_ready }}"
-          - "Valor ATUAL de _temp_nodes_ready_count: {{ _temp_nodes_ready_count }}"
-          - "Tipo ATUAL de _temp_nodes_ready_count: {{ _temp_nodes_ready_count | type_debug }}"
-          - "Valor ATUAL de _temp_nodes_not_ready_list: {{ _temp_nodes_not_ready_list }}"
-      when: ansible_verbosity > 1 # Mostra apenas com -vv ou mais
-
-    - name: Atualizar contadores e listas de Nós
-      ansible.builtin.set_fact:
-        _temp_nodes_ready_count: >-
-          {{ (_temp_nodes_ready_count | int) + 1  # Força para inteiro ANTES de somar
-             if node_is_actually_ready
-             else (_temp_nodes_ready_count | int) }} # Garante que o tipo se mantenha inteiro
-        _temp_nodes_not_ready_list: >-
-          {{ _temp_nodes_not_ready_list + [item.metadata.name ~ ''] # Garante que o nome do nó é string
-             if not node_is_actually_ready
-             else _temp_nodes_not_ready_list }}
+- name: GET_CLUSTER_INFO | Iterar sobre Nós para Depuração e Atualização de Status
+  ansible.builtin.include_tasks: process_node_item.yml # Chama o novo arquivo
   loop: "{{ r_nodes.resources }}"
   loop_control:
     label: "{{ item.metadata.name }}"
-    loop_var: item # Boa prática definir explicitamente a variável do loop
+    loop_var: item # 'item' será a variável de loop disponível em process_node_item.yml
   when:
-    - item.status is defined
-    - item.status.conditions is defined
+    - item.status is defined # Garante que o nó tem um status
+    - item.status.conditions is defined # Garante que o nó tem condições para avaliar
 
 - name: GET_CLUSTER_INFO | Definir fatos finais do status dos Nós
   ansible.builtin.set_fact:

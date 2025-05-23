@@ -1,0 +1,38 @@
+# roles/aro_f1_checks/tasks/process_node_item.yml
+---
+# Este arquivo é chamado para cada 'item' (nó) do loop em get_cluster_info.yml
+# A variável 'item' está disponível aqui.
+
+- name: "Definir 'node_is_actually_ready_now' para o Nó: {{ item.metadata.name }}"
+  ansible.builtin.set_fact:
+    node_is_actually_ready_now: >-
+      {{ (item.status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0) }}
+
+- name: "DEBUG NÓ ({{ item.metadata.name }}) - ANTES da atualização de contadores"
+  ansible.builtin.debug:
+    msg:
+      - "Nó: {{ item.metadata.name }}"
+      - "Condição node_is_actually_ready_now: {{ node_is_actually_ready_now }}"
+      - "Valor ATUAL _temp_nodes_ready_count: {{ _temp_nodes_ready_count }}" # Vem do escopo do chamador
+      - "Tipo ATUAL _temp_nodes_ready_count: {{ _temp_nodes_ready_count | type_debug }}"
+      - "Lista ATUAL _temp_nodes_not_ready_list: {{ _temp_nodes_not_ready_list }}" # Vem do escopo do chamador
+  when: ansible_verbosity > 1 # Mostra apenas com -vv ou mais
+
+- name: "ATUALIZAR _temp_nodes_ready_count SE Nó ({{ item.metadata.name }}) está pronto"
+  ansible.builtin.set_fact:
+    _temp_nodes_ready_count: "{{ (_temp_nodes_ready_count | int) + 1 }}"
+  when: node_is_actually_ready_now
+
+- name: "ATUALIZAR _temp_nodes_not_ready_list SE Nó ({{ item.metadata.name }}) NÃO está pronto"
+  ansible.builtin.set_fact:
+    _temp_nodes_not_ready_list: "{{ _temp_nodes_not_ready_list + [item.metadata.name ~ ''] }}"
+  when: not node_is_actually_ready_now
+
+- name: "DEBUG NÓ ({{ item.metadata.name }}) - APÓS atualização de contadores"
+  ansible.builtin.debug:
+    msg:
+      - "Nó: {{ item.metadata.name }}"
+      - "Valor NOVO _temp_nodes_ready_count: {{ _temp_nodes_ready_count }}"
+      - "Tipo NOVO _temp_nodes_ready_count: {{ _temp_nodes_ready_count | type_debug }}"
+      - "Lista NOVA _temp_nodes_not_ready_list: {{ _temp_nodes_not_ready_list }}"
+    verbosity: 2 # Mostra apenas com -vv ou mais
