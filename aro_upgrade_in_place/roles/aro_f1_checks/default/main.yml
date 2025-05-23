@@ -1,0 +1,5 @@
+---
+# Define o caminho completo para os artefatos desta fase, usando vars globais e específicas do cluster.
+# local_artifact_base_path vem de group_vars/all.yml
+# current_cluster_identifier é passado para a role no playbook principal.
+f1_artifact_dir: "{{ local_artifact_base_path }}/{{ current_cluster_identifier }}/fase_1"

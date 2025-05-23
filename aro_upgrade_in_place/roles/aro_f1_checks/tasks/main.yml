@@ -1,0 +1,52 @@
+---
+# Este task file orquestra todas as verificações da Fase 1.
+# As credenciais para os módulos kubernetes.core são fornecidas pelo ambiente do AAP.
+# A variável 'current_cluster_identifier' está disponível a partir do playbook.
+# A variável 'f1_artifact_dir' está disponível a partir dos defaults da role.
+
+- name: Criar diretório de artefatos para a Fase 1 do cluster
+  ansible.builtin.file:
+    path: "{{ f1_artifact_dir }}" # Usando a var definida em defaults/main.yml
+    state: directory
+    mode: '0755'
+  run_once: true # Garante que é criado apenas uma vez por execução (mesmo que o playbook rode em localhost)
+
+- name: 1.1 - Coletar Informações Essenciais do Cluster
+  ansible.builtin.include_tasks: get_cluster_info.yml
+
+- name: 1.2 - Avaliar Caminho de Upgrade Inicial e Próximos Saltos Lógicos
+  ansible.builtin.include_tasks: assess_initial_path.yml
+  when: aro_cluster_info.cluster_version_obj is defined # Só executa se a info do cluster foi obtida com sucesso
+
+- name: 1.3 - Verificar Recursos do Cluster (Placeholder)
+  ansible.builtin.include_tasks: check_resources.yml
+  when: aro_cluster_info.cluster_version_obj is defined
+
+- name: 1.4 - Coletar Baseline de Saúde das Aplicações de Negócio
+  ansible.builtin.include_tasks: app_health_baseline.yml
+  when: aro_cluster_info.cluster_version_obj is defined
+
+- name: 1.5 - Verificar Configurações Customizadas (Placeholder)
+  ansible.builtin.include_tasks: check_custom_configs.yml
+  when: aro_cluster_info.cluster_version_obj is defined
+
+- name: Fase 1 - Sumário dos Pré-Checks para {{ current_cluster_identifier }}
+  ansible.builtin.debug:
+    msg:
+      - "Cluster Identificador: {{ current_cluster_identifier }}"
+      - "Versão Atual: {{ aro_cluster_info.current_version | default('N/A') }}"
+      - "Canal Atual: {{ aro_cluster_info.current_channel | default('N/A') }}"
+      - "Saúde Geral do Cluster: {{ aro_cluster_health_summary | default('N/A') }}"
+      - "--------------------------------------------------"
+      - "Análise Inicial do Caminho de Upgrade:"
+      - "  Próximo Canal EUS Lógico na Sequência: {{ aro_initial_path_assessment.next_logical_eus_channel | default('N/A') }}"
+      - "  Candidato Z-Stream Recomendado no Canal EUS Atual ({{ aro_cluster_info.current_channel | default('N/A') }}):"
+      - "    Versão: {{ aro_initial_path_assessment.recommended_zstream_update.version | default('Nenhuma atualização Z-stream recomendada encontrada.') }}"
+      - "    Imagem: {{ aro_initial_path_assessment.recommended_zstream_update.image | default('N/A') }}"
+      - "  Candidato para Salto para Próximo Canal EUS Lógico ({{ aro_initial_path_assessment.next_logical_eus_channel | default('N/A') }}):"
+      - "    Versão: {{ aro_initial_path_assessment.recommended_next_eus_update.version | default('Nenhum candidato para próximo EUS encontrado nas atualizações disponíveis imediatamente.') }}"
+      - "    Imagem: {{ aro_initial_path_assessment.recommended_next_eus_update.image | default('N/A') }}"
+      - "--------------------------------------------------"
+      - "Baseline de Aplicações Salvo em: {{ f1_artifact_dir }}/app_status_pre_upgrade.json"
+      - "Log Completo dos Objetos Coletados Salvo em: {{ f1_artifact_dir }}/cluster_objects_pre_upgrade.json"
+  when: aro_cluster_info is defined and aro_initial_path_assessment is defined

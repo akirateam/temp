@@ -1,0 +1,66 @@
+---
+# Analisa as atualizações disponíveis e sugere próximos passos lógicos.
+# Utiliza aro_cluster_info (coletado em get_cluster_info.yml)
+# e target_final_eus_major_minor, eus_known_progression (de group_vars).
+
+- name: ASSESS_PATH | Extrair EUS major.minor atual da versão do cluster
+  ansible.builtin.set_fact:
+    current_eus_major_minor: "{{ aro_cluster_info.current_version.split('.')[0] }}.{{ aro_cluster_info.current_version.split('.')[1] }}"
+
+- name: ASSESS_PATH | Determinar próximo EUS major.minor lógico na sequência de progressão EUS
+  vars:
+    # Encontra o índice do EUS atual na lista de progressão conhecida
+    current_eus_index_in_progression: >-
+      {{ eus_known_progression.index(current_eus_major_minor)
+         if current_eus_major_minor in eus_known_progression else -1 }}
+    # Calcula o índice do próximo EUS na lista
+    next_eus_index_in_progression: "{{ current_eus_index_in_progression + 1 }}"
+  ansible.builtin.set_fact:
+    # Define o próximo EUS minor lógico se estiver dentro dos limites da lista de progressão
+    next_logical_eus_major_minor: >-
+      {{ eus_known_progression[next_eus_index_in_progression]
+         if current_eus_index_in_progression != -1 and
+            next_eus_index_in_progression < eus_known_progression | length
+         else 'N/A' }} # 'N/A' se não houver próximo EUS definido ou se o atual não está na lista
+
+- name: ASSESS_PATH | Procurar por atualização Z-stream recomendada DENTRO do canal EUS ATUAL
+  vars:
+    # Filtra 'available_updates' para:
+    # 1. Versões que pertencem ao mesmo EUS major.minor atual.
+    # 2. Pertencem ao canal EUS correto para o EUS major.minor atual (ex: 'eus-4.14').
+    # 3. São estritamente mais recentes que a versão atual do cluster.
+    # Ordena pela versão mais alta (mais recente) e pega a primeira.
+    zstream_update_candidates_in_current_eus: >-
+      {{ aro_cluster_info.available_updates |
+         selectattr('version', 'match', '^' + current_eus_major_minor + '\\..*') |
+         selectattr('channel', 'default', aro_cluster_info.current_channel) |
+         selectattr('channel', 'equalto', 'eus-' + current_eus_major_minor) |
+         selectattr('version', '>', aro_cluster_info.current_version) |
+         sort(attribute='version', reverse=true) }}
+  ansible.builtin.set_fact:
+    _recommended_zstream_update: "{{ zstream_update_candidates_in_current_eus | first | default({}) }}"
+
+- name: ASSESS_PATH | Procurar por atualização para o PRÓXIMO canal EUS lógico
+  vars:
+    # Filtra 'available_updates' para:
+    # 1. Versões que pertencem ao 'next_logical_eus_major_minor' determinado anteriormente.
+    # 2. Pertencem ao canal EUS correto para esse próximo EUS (ex: 'eus-4.16').
+    # Ordena pela versão mais baixa (geralmente a versão de entrada no novo canal EUS) e pega a primeira.
+    next_eus_update_candidates: >-
+      {{ aro_cluster_info.available_updates |
+         selectattr('version', 'match', '^' + next_logical_eus_major_minor + '\\..*') |
+         selectattr('channel', 'default', '') |
+         selectattr('channel', 'equalto', 'eus-' + next_logical_eus_major_minor) |
+         sort(attribute='version') }} # Pega a versão mais baixa como candidata de entrada
+  ansible.builtin.set_fact:
+    _recommended_next_eus_update: "{{ next_eus_update_candidates | first | default({}) }}"
+  when: next_logical_eus_major_minor != 'N/A' # Só executa se houver um próximo EUS lógico definido
+
+- name: ASSESS_PATH | Armazenar resultado da avaliação do caminho inicial para fácil acesso
+  ansible.builtin.set_fact:
+    aro_initial_path_assessment:
+      current_eus_version_is_target_or_beyond: "{{ current_eus_major_minor >= target_final_eus_major_minor }}"
+      current_eus_on_cluster: "{{ current_eus_major_minor }}"
+      next_logical_eus_channel: "{{ 'eus-' + next_logical_eus_major_minor if next_logical_eus_major_minor != 'N/A' else 'N/A' }}"
+      recommended_zstream_update: "{{ _recommended_zstream_update }}"
+      recommended_next_eus_update: "{{ _recommended_next_eus_update | default({}) }}" # Garante que é um dict mesmo se when falhar

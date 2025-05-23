@@ -1,0 +1,69 @@
+---
+# Coleta o estado atual das aplicações de negócio e salva em JSON.
+# Utiliza business_namespaces_patterns e excluded_namespaces_for_apps de group_vars.
+# Salva o arquivo em f1_artifact_dir (definido em defaults/main.yml).
+
+- name: APP_BASELINE | Identificar namespaces de negócio para baseline
+  kubernetes.core.k8s_info:
+    kind: Namespace
+  register: r_all_k8s_namespaces
+
+- name: APP_BASELINE | Filtrar namespaces de negócio alvo
+  ansible.builtin.set_fact:
+    target_business_namespaces_for_baseline: >-
+      {{ r_all_k8s_namespaces.resources |
+         map(attribute='metadata.name') |
+         reject('in', excluded_namespaces_for_apps) |
+         select('match', '(' + (business_namespaces_patterns | join('|')) + ')') | list }}
+  vars:
+    # Estas vars vêm de group_vars/all.yml
+    excluded_namespaces_for_apps: "{{ excluded_namespaces_for_apps }}"
+    business_namespaces_patterns: "{{ business_namespaces_patterns }}"
+
+- name: APP_BASELINE | Coletar status dos pods por namespace de negócio
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: "{{ item }}"
+    # label_selectors: # Adicione seletores de label se quiser focar em apps específicos dentro dos namespaces
+  register: r_pods_in_selected_namespace
+  loop: "{{ target_business_namespaces_for_baseline }}"
+  loop_control:
+    label: "{{ item }}" # Melhora o logging do Ansible
+
+- name: APP_BASELINE | Processar e estruturar os dados do baseline de aplicações
+  ansible.builtin.set_fact:
+    app_status_baseline_json_data: "{{ app_status_baseline_json_data | default({}) | combine({
+      item.item: { # item.item é o nome do namespace do loop anterior
+        'namespace': item.item,
+        'total_pods': item.resources | length,
+        'status_summary': {
+          'Running': (item.resources | selectattr('status.phase', 'equalto', 'Running') | list | length),
+          'Pending': (item.resources | selectattr('status.phase', 'equalto', 'Pending') | list | length),
+          'Failed': (item.resources | selectattr('status.phase', 'equalto', 'Failed') | list | length),
+          'Succeeded': (item.resources | selectattr('status.phase', 'equalto', 'Succeeded') | list | length),
+          'Unknown': (item.resources | selectattr('status.phase', 'equalto', 'Unknown') | list | length)
+        },
+        'restarts_summary': { # Exemplo de como obter contagem de restarts
+            'total_restarts_all_pods': (item.resources | selectattr('status.containerStatuses', 'defined') |
+                                        map(attribute='status.containerStatuses') | flatten |
+                                        sum(attribute='restartCount')),
+            'pods_with_restarts': (item.resources | selectattr('status.containerStatuses', 'defined') |
+                                    map(attribute='status.containerStatuses') | flatten |
+                                    selectattr('restartCount', '>', 0) | map(attribute='name') | unique | list ) # Nome dos containers com restarts
+        },
+        'pods_in_crashloop': (item.resources | selectattr('status.containerStatuses', 'defined') |
+                               map(attribute='status.containerStatuses') | flatten |
+                               selectattr('state.waiting.reason', 'defined') |
+                               selectattr('state.waiting.reason', 'equalto', 'CrashLoopBackOff') |
+                               map(attribute='name') | unique | list), # Nome dos containers em CrashLoop
+        'pods_details_list': item.resources | map(attribute='metadata.name') | list # Lista simples de nomes de pods
+        # Você pode adicionar mais detalhes por pod se necessário, mas pode tornar o JSON grande.
+      }
+    }) }}"
+  loop: "{{ r_pods_in_selected_namespace.results }}" # .results é usado quando o loop tem um register
+
+- name: APP_BASELINE | Salvar baseline de aplicações em arquivo JSON
+  ansible.builtin.copy:
+    content: "{{ app_status_baseline_json_data | to_nice_json(indent=2) }}"
+    dest: "{{ f1_artifact_dir }}/app_status_pre_upgrade.json"
+  when: app_status_baseline_json_data is defined and app_status_baseline_json_data != {}

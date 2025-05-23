@@ -1,0 +1,37 @@
+---
+- name: Fase 1 - Preparação, Análise de Caminho e Pré-Checks para Cluster ARO
+  hosts: localhost
+  gather_facts: false
+  connection: local # Garante que tudo roda localmente no EE
+
+  # AVISO IMPORTANTE SOBRE CREDENCIAIS:
+  # As credenciais de acesso ao cluster OpenShift (API Host, Token, Validação SSL)
+  # são automaticamente injetadas pelo AAP no ambiente de execução
+  # através da Credencial "OpenShift or Kubernetes Bearer Token"
+  # associada a este Job Template. Não é necessário defini-las aqui.
+
+  vars:
+    # Variável OBRIGATÓRIA a ser passada pelo AAP (via Survey ou variáveis do Job Template)
+    aro_cluster_identifier: "{{ aro_cluster_identifier_from_survey | default('unset_cluster_identifier') }}"
+    # Exemplo: aro_cluster_identifier_from_survey seria o nome da variável no Survey do AAP.
+
+  pre_tasks:
+    - name: Validar se aro_cluster_identifier foi fornecido
+      ansible.builtin.fail:
+        msg: "A variável 'aro_cluster_identifier' é obrigatória e não foi definida. Por favor, forneça via Survey do AAP."
+      when: aro_cluster_identifier == 'unset_cluster_identifier'
+
+    - name: Exibir informações da execução
+      ansible.builtin.debug:
+        msg:
+          - "Iniciando Fase 1 para o Cluster: {{ aro_cluster_identifier }}"
+          - "Diretório base para artefatos: {{ local_artifact_base_path }}"
+          - "Versão EUS Alvo Final: {{ target_final_eus_major_minor }}"
+
+  roles:
+    - role: aro_f1_checks
+      # Passando variáveis necessárias para a role.
+      # A role também terá acesso às variáveis globais de group_vars/all.yml.
+      vars:
+        # current_cluster_identifier é usado dentro da role para caminhos de arquivos e logging.
+        current_cluster_identifier: "{{ aro_cluster_identifier }}"

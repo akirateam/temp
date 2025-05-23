@@ -1,0 +1,30 @@
+# Caminho base no control node (dentro do EE) para salvar artefatos de todas as fases
+local_artifact_base_path: "/var/lib/ansible/artifacts" # Diretório comum para artefatos no EE, ajuste se necessário
+
+# Defina o EUS minor final que você deseja alcançar para os upgrades
+target_final_eus_major_minor: "4.18"
+
+# Sequência conhecida de progressão para canais EUS (apenas os minors)
+# Ajuda a determinar qual é o "próximo" EUS minor lógico na estratégia de upgrade.
+eus_known_progression:
+  - "4.10"
+  - "4.12"
+  - "4.14"
+  - "4.16"
+  - "4.18"
+  # Adicione futuras versões EUS conforme se tornem relevantes
+
+# Padrões de regex para identificar namespaces de negócio para o baseline de aplicações
+business_namespaces_patterns:
+  - "^app-.*"
+  - ".*-production$"
+  - "^my-critical-app$"
+
+# Lista de namespaces a serem explicitamente excluídos da análise de aplicações de negócio
+excluded_namespaces_for_apps:
+  - "openshift" # Catch-all para muitos namespaces openshift-*
+  - "openshift-.*" # Mais explícito
+  - "kube-.*"
+  - "default"
+  - "logging"
+  - "monitoring" # A menos que você tenha aplicações de negócio dentro do namespace de monitoramento padrão

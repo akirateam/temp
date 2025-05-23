@@ -1,0 +1,35 @@
+---
+- name: CHECK_CUSTOM_CONFIGS | Verificar PodDisruptionBudgets (PDBs)
+  kubernetes.core.k8s_info:
+    kind: PodDisruptionBudget
+    api_version: policy/v1 # ou policy/v1beta1 dependendo da versão do cluster
+    # namespace: <seu_namespace_de_apps> # Descomente e ajuste se quiser focar em namespaces específicos
+  register: r_pdbs
+
+- name: CHECK_CUSTOM_CONFIGS | Analisar PDBs e alertar sobre configurações restritivas
+  ansible.builtin.set_fact:
+    problematic_pdbs: >-
+      {{ r_pdbs.resources |
+         selectattr('status.disruptionsAllowed', 'defined') |
+         selectattr('status.disruptionsAllowed', '<', 1) | # PDBs que não permitem nenhuma disrupção
+         map(attribute='metadata.namespace' + '/' + attribute='metadata.name') | list }}
+  when: r_pdbs.resources is defined
+
+- name: CHECK_CUSTOM_CONFIGS | Exibir PDBs que podem bloquear o drain de nós
+  ansible.builtin.debug:
+    msg: "ALERTA: Os seguintes PDBs não permitem disrupções e podem bloquear o upgrade: {{ problematic_pdbs }}"
+  when: problematic_pdbs is defined and problematic_pdbs | length > 0
+
+- name: CHECK_CUSTOM_CONFIGS | Salvar PDBs em arquivo
+  ansible.builtin.copy:
+    content: "{{ r_pdbs.resources | to_nice_json(indent=2) }}"
+    dest: "{{ f1_artifact_dir }}/pdbs_pre_upgrade.json"
+  when: r_pdbs.resources is defined
+
+# Adicionar aqui:
+# - Verificações para outras configurações customizadas que podem impactar o upgrade
+#   (ex: admission webhooks customizados, configurações de rede específicas, etc.)
+
+- name: CHECK_CUSTOM_CONFIGS | Placeholder para verificações de configurações customizadas adicionais
+  ansible.builtin.debug:
+    msg: "Implementar verificações para webhooks, configurações de rede customizadas, etc., aqui."
