@@ -1,7 +1,5 @@
+# ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/get_cluster_info.yml
 ---
-# Coleta informações básicas do cluster, operadores, nós e MCPs.
-# Módulos kubernetes.core usarão credenciais do ambiente AAP.
-
 - name: GET_CLUSTER_INFO | Obter informações do objeto ClusterVersion 'version'
   kubernetes.core.k8s_info:
     kind: ClusterVersion
@@ -49,7 +47,8 @@
          else _not_available_operator_names_list }}
   loop: "{{ r_cluster_operators.resources }}"
   loop_control:
-    label: "{{ item.metadata.name }}"
+    label: "{{ item.metadata.name | default('CO_SEM_NOME_METADATA') }}"
+    loop_var: item
   when:
     - item.status is defined
     - item.status.conditions is defined
@@ -62,10 +61,6 @@
       degraded_operators: "{{ _degraded_operator_names_list }}"
     aro_co_degraded_count: "{{ _degraded_operator_names_list | length }}"
 
-# Em roles/aro_f1_checks/tasks/get_cluster_info.yml
-
-# ... (tasks anteriores para ClusterVersion, ClusterOperators) ...
-
 - name: GET_CLUSTER_INFO | Obter status de todos os Nós (Nodes)
   kubernetes.core.k8s_info:
     kind: Node
@@ -77,14 +72,14 @@
     _temp_nodes_not_ready_list: []
 
 - name: GET_CLUSTER_INFO | Iterar sobre Nós para Depuração e Atualização de Status
-  ansible.builtin.include_tasks: process_node_item.yml # Chama o novo arquivo
+  ansible.builtin.include_tasks: process_node_item.yml # Chama o arquivo para processar cada nó
   loop: "{{ r_nodes.resources }}"
   loop_control:
-    label: "{{ item.metadata.name }}"
-    loop_var: item # 'item' será a variável de loop disponível em process_node_item.yml
+    label: "{{ item.metadata.name | default('NODE_SEM_NOME_METADATA') }}"
+    loop_var: item
   when:
-    - item.status is defined # Garante que o nó tem um status
-    - item.status.conditions is defined # Garante que o nó tem condições para avaliar
+    - item.status is defined
+    - item.status.conditions is defined
 
 - name: GET_CLUSTER_INFO | Definir fatos finais do status dos Nós
   ansible.builtin.set_fact:
@@ -101,7 +96,7 @@
 
 - name: GET_CLUSTER_INFO | Inicializar status para MCPs
   ansible.builtin.set_fact:
-    _temp_mcp_all_updated_flag: true # Assumir que todos estão atualizados inicialmente
+    _temp_mcp_all_updated_flag: true
     _temp_mcp_degraded_list: []
 
 - name: GET_CLUSTER_INFO | Iterar sobre MCPs para verificar status
@@ -116,23 +111,12 @@
          else _temp_mcp_degraded_list }}
   loop: "{{ r_mcps.resources }}"
   loop_control:
-    label: "{{ item.metadata.name }}"
+    label: "{{ item.metadata.name | default('MCP_SEM_NOME_METADATA') }}"
+    loop_var: item
   when:
     - item.status is defined
     - item.status.updatedMachineCount is defined
     - item.status.machineCount is defined
-    # A condição para _temp_mcp_all_updated_flag já trata o update,
-    # aqui o when é mais para garantir que os dados existem para a checagem de degradado.
-
-# Em roles/aro_f1_checks/tasks/get_cluster_info.yml
-
-# ... (tasks anteriores, incluindo a iteração sobre MCPs para _temp_mcp_all_updated_flag e _temp_mcp_degraded_list) ...
-
-# Adicione esta task de debug ANTES de "Definir fatos finais do status dos MCPs"
-- name: "DEBUG MCPs | Conteúdo de r_mcps.resources antes de construir mcp_details"
-  ansible.builtin.debug:
-    var: r_mcps.resources
-    verbosity: 2 # Mostra com -vv ou mais
 
 - name: GET_CLUSTER_INFO | Inicializar dicionário para mcp_details
   ansible.builtin.set_fact:
@@ -143,19 +127,19 @@
     _temp_mcp_details_dict: "{{ _temp_mcp_details_dict | combine({ item.metadata.name: item.status }) }}"
   loop: "{{ r_mcps.resources }}"
   loop_control:
-    label: "{{ item.metadata.name | default('MCP_ITEM_SEM_NOME_METADATA') }}"
+    label: "{{ item.metadata.name | default('MCP_SEM_NOME_METADATA_POPULATE') }}"
     loop_var: item
   when:
     - item.metadata is defined
     - item.metadata.name is defined
-    - item.status is defined # Importante para o valor do dicionário
+    - item.status is defined
 
 - name: GET_CLUSTER_INFO | Definir fatos finais do status dos MCPs
   ansible.builtin.set_fact:
     aro_mcp_status:
       all_updated: "{{ _temp_mcp_all_updated_flag }}"
       degraded_mcps: "{{ _temp_mcp_degraded_list }}"
-      mcp_details: "{{ _temp_mcp_details_dict }}" # Usa o dicionário construído de forma segura
+      mcp_details: "{{ _temp_mcp_details_dict }}"
 
 - name: GET_CLUSTER_INFO | Sumarizar saúde geral do cluster para display e validação rápida
   ansible.builtin.set_fact:

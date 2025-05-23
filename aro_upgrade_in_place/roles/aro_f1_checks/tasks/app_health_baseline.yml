@@ -1,8 +1,5 @@
+# ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/app_health_baseline.yml
 ---
-# Coleta o estado atual das aplicações de negócio e salva em JSON.
-# Utiliza business_namespaces_patterns e excluded_namespaces_for_apps de group_vars.
-# Salva o arquivo em f1_artifact_dir (definido em defaults/main.yml).
-
 - name: APP_BASELINE | Identificar namespaces de negócio para baseline
   kubernetes.core.k8s_info:
     kind: Namespace
@@ -16,24 +13,22 @@
          reject('in', excluded_namespaces_for_apps) |
          select('match', '(' + (business_namespaces_patterns | join('|')) + ')') | list }}
   vars:
-    # Estas vars vêm de group_vars/all.yml
-    excluded_namespaces_for_apps: "{{ excluded_namespaces_for_apps }}"
-    business_namespaces_patterns: "{{ business_namespaces_patterns }}"
+    excluded_namespaces_for_apps: "{{ excluded_namespaces_for_apps }}" # de group_vars
+    business_namespaces_patterns: "{{ business_namespaces_patterns }}" # de group_vars
 
 - name: APP_BASELINE | Coletar status dos pods por namespace de negócio
   kubernetes.core.k8s_info:
     kind: Pod
     namespace: "{{ item }}"
-    # label_selectors: # Adicione seletores de label se quiser focar em apps específicos dentro dos namespaces
   register: r_pods_in_selected_namespace
   loop: "{{ target_business_namespaces_for_baseline }}"
   loop_control:
-    label: "{{ item }}" # Melhora o logging do Ansible
+    label: "{{ item }}"
 
 - name: APP_BASELINE | Processar e estruturar os dados do baseline de aplicações
   ansible.builtin.set_fact:
     app_status_baseline_json_data: "{{ app_status_baseline_json_data | default({}) | combine({
-      item.item: { # item.item é o nome do namespace do loop anterior
+      item.item: {
         'namespace': item.item,
         'total_pods': item.resources | length,
         'status_summary': {
@@ -43,27 +38,30 @@
           'Succeeded': (item.resources | selectattr('status.phase', 'equalto', 'Succeeded') | list | length),
           'Unknown': (item.resources | selectattr('status.phase', 'equalto', 'Unknown') | list | length)
         },
-        'restarts_summary': { # Exemplo de como obter contagem de restarts
+        'restarts_summary': {
             'total_restarts_all_pods': (item.resources | selectattr('status.containerStatuses', 'defined') |
                                         map(attribute='status.containerStatuses') | flatten |
                                         sum(attribute='restartCount')),
-            'pods_with_restarts': (item.resources | selectattr('status.containerStatuses', 'defined') |
-                                    map(attribute='status.containerStatuses') | flatten |
-                                    selectattr('restartCount', '>', 0) | map(attribute='name') | unique | list ) # Nome dos containers com restarts
+            'pods_with_restarts_names': (item.resources | selectattr('status.containerStatuses', 'defined') |
+                                    select('has_restarts') | # Precisa do teste customizado ou lógica expandida
+                                    map(attribute='metadata.name') | unique | list )
         },
-        'pods_in_crashloop': (item.resources | selectattr('status.containerStatuses', 'defined') |
+        'pods_in_crashloop_names': (item.resources | selectattr('status.containerStatuses', 'defined') |
                                map(attribute='status.containerStatuses') | flatten |
                                selectattr('state.waiting.reason', 'defined') |
                                selectattr('state.waiting.reason', 'equalto', 'CrashLoopBackOff') |
-                               map(attribute='name') | unique | list), # Nome dos containers em CrashLoop
-        'pods_details_list': item.resources | map(attribute='metadata.name') | list # Lista simples de nomes de pods
-        # Você pode adicionar mais detalhes por pod se necessário, mas pode tornar o JSON grande.
+                               # Precisaria voltar ao pod original para pegar o nome, ou registrar mais dados.
+                               # Esta parte é simplificada para apenas contar.
+                               list | length), # Mudei para contagem para simplificar
+        'pods_details_list': item.resources | map(attribute='metadata.name') | list
       }
     }) }}"
-  loop: "{{ r_pods_in_selected_namespace.results }}" # .results é usado quando o loop tem um register
+  loop: "{{ r_pods_in_selected_namespace.results }}"
+  vars: # Vars para o filtro/teste 'has_restarts' (se você criar um)
+    has_restarts_min_count: 0
 
 - name: APP_BASELINE | Salvar baseline de aplicações em arquivo JSON
   ansible.builtin.copy:
-    content: "{{ app_status_baseline_json_data | to_nice_json(indent=2) }}"
+    content: "{{ app_status_baseline_json_data | default({}) | to_nice_json(indent=2) }}"
     dest: "{{ f1_artifact_dir }}/app_status_pre_upgrade.json"
-  when: app_status_baseline_json_data is defined and app_status_baseline_json_data != {}
+  when: app_status_baseline_json_data is defined

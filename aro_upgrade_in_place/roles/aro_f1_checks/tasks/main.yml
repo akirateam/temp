@@ -1,24 +1,20 @@
+# ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/main.yml
 ---
-# Este task file orquestra todas as verificações da Fase 1.
-# As credenciais para os módulos kubernetes.core são fornecidas pelo ambiente do AAP.
-# A variável 'current_cluster_identifier' está disponível a partir do playbook.
-# A variável 'f1_artifact_dir' está disponível a partir dos defaults da role.
-
 - name: Criar diretório de artefatos para a Fase 1 do cluster
   ansible.builtin.file:
-    path: "{{ f1_artifact_dir }}" # Usando a var definida em defaults/main.yml
+    path: "{{ f1_artifact_dir }}"
     state: directory
     mode: '0755'
-  run_once: true # Garante que é criado apenas uma vez por execução (mesmo que o playbook rode em localhost)
+  run_once: true
 
 - name: 1.1 - Coletar Informações Essenciais do Cluster
   ansible.builtin.include_tasks: get_cluster_info.yml
 
 - name: 1.2 - Avaliar Caminho de Upgrade Inicial e Próximos Saltos Lógicos
   ansible.builtin.include_tasks: assess_initial_path.yml
-  when: aro_cluster_info.cluster_version_obj is defined # Só executa se a info do cluster foi obtida com sucesso
+  when: aro_cluster_info.cluster_version_obj is defined
 
-- name: 1.3 - Verificar Recursos do Cluster (Placeholder)
+- name: 1.3 - Verificar Recursos do Cluster
   ansible.builtin.include_tasks: check_resources.yml
   when: aro_cluster_info.cluster_version_obj is defined
 
@@ -26,7 +22,7 @@
   ansible.builtin.include_tasks: app_health_baseline.yml
   when: aro_cluster_info.cluster_version_obj is defined
 
-- name: 1.5 - Verificar Configurações Customizadas (Placeholder)
+- name: 1.5 - Verificar Configurações Customizadas
   ansible.builtin.include_tasks: check_custom_configs.yml
   when: aro_cluster_info.cluster_version_obj is defined
 

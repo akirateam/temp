@@ -1,14 +1,15 @@
+# ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/check_resources.yml
 ---
 - name: CHECK_RESOURCES | Verificar Métricas de Recursos (Exemplo com NodeMetrics)
   kubernetes.core.k8s_info:
     kind: NodeMetrics
     api_version: metrics.k8s.io/v1beta1
   register: r_node_metrics
-  ignore_errors: yes # O Metrics Server pode não estar disponível ou o user pode não ter permissão
+  ignore_errors: yes
 
 - name: CHECK_RESOURCES | Exibir informações básicas de NodeMetrics se disponíveis
   ansible.builtin.debug:
-    msg: "NodeMetrics coletadas. Total de nós com métricas: {{ r_node_metrics.resources | length }}"
+    msg: "NodeMetrics coletadas para {{ current_cluster_identifier }}. Total de nós com métricas: {{ r_node_metrics.resources | length }}"
   when: r_node_metrics.resources is defined and r_node_metrics.resources
 
 - name: CHECK_RESOURCES | Salvar NodeMetrics em arquivo (se coletadas)
@@ -17,13 +18,6 @@
     dest: "{{ f1_artifact_dir }}/nodemetrics_pre_upgrade.json"
   when: r_node_metrics.resources is defined and r_node_metrics.resources
 
-# Adicionar aqui:
-# - Lógica para verificar se os recursos (CPU, memória, disco) estão dentro de limites aceitáveis.
-# - Isso pode envolver parsear o output de NodeMetrics ou executar comandos 'oc adm top node'
-#   (mais complexo de fazer de forma robusta e segura via Ansible sem acesso direto ao 'oc' no nó).
-# - Para ARO, o sobredimensionamento e a capacidade de burst são gerenciados pelo Azure,
-#   mas uma verificação de utilização alta e persistente pode ser um indicador de problemas.
-
 - name: CHECK_RESOURCES | Placeholder para verificações adicionais de recursos
   ansible.builtin.debug:
-    msg: "Implementar verificações detalhadas de CPU, memória e disco aqui."
+    msg: "Implementar verificações detalhadas de CPU, memória e disco para {{ current_cluster_identifier }} aqui."
