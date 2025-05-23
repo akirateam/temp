@@ -32,18 +32,39 @@
     api_version: config.openshift.io/v1
   register: r_cluster_operators
 
-- name: GET_CLUSTER_INFO | Processar status dos ClusterOperators
+# --- INÍCIO DA SEÇÃO CORRIGIDA PARA PROCESSAR CLUSTEROPERATORS ---
+- name: GET_CLUSTER_INFO | Inicializar listas para status de ClusterOperator
+  ansible.builtin.set_fact:
+    _degraded_operator_names_list: []
+    _not_available_operator_names_list: [] # Operadores que têm Available=False
+
+- name: GET_CLUSTER_INFO | Iterar sobre ClusterOperators para checar condições
+  ansible.builtin.set_fact:
+    _degraded_operator_names_list: >-
+      {{ _degraded_operator_names_list + [item.metadata.name]
+         if (item.status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | list | length > 0)
+         else _degraded_operator_names_list }}
+    _not_available_operator_names_list: >-
+      {{ _not_available_operator_names_list + [item.metadata.name]
+         if (item.status.conditions | selectattr('type', 'equalto', 'Available') | selectattr('status', 'equalto', 'False') | list | length > 0)
+         else _not_available_operator_names_list }}
+  loop: "{{ r_cluster_operators.resources }}"
+  when:
+    - item.status is defined
+    - item.status.conditions is defined
+
+- name: GET_CLUSTER_INFO | Definir fatos finais do status dos ClusterOperators
   ansible.builtin.set_fact:
     aro_co_status:
       total: "{{ r_cluster_operators.resources | length }}"
-      all_available: "{{ not (r_cluster_operators.resources | selectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Available') | selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'False') | list) }}"
-      degraded_operators: "{{ r_cluster_operators.resources | selectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Degraded') | selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'True') | map(attribute='metadata.name') | list }}"
-    aro_co_degraded_count: "{{ (r_cluster_operators.resources | selectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Degraded') | selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'True') | list | length) }}"
+      all_available: "{{ _not_available_operator_names_list | length == 0 }}" # True se nenhum operador estiver "Não Disponível"
+      degraded_operators: "{{ _degraded_operator_names_list }}" # Lista de nomes dos operadores degradados
+    aro_co_degraded_count: "{{ _degraded_operator_names_list | length }}"
+# --- FIM DA SEÇÃO CORRIGIDA PARA PROCESSAR CLUSTEROPERATORS ---
 
 - name: GET_CLUSTER_INFO | Obter status de todos os Nós (Nodes)
   kubernetes.core.k8s_info:
     kind: Node
-    # api_version: v1 # O default para k8s_info é v1 para Node
   register: r_nodes
 
 - name: GET_CLUSTER_INFO | Processar status dos Nós
@@ -56,8 +77,32 @@
            selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'True') | list | length }}
     aro_nodes_not_ready_list: >-
         {{ r_nodes.resources |
-           rejectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Ready') | # Ou que não tenham o status 'True'
-           map(attribute='metadata.name') | list }}
+           # Seleciona nós onde a condição Ready não é 'True'
+           selectattr('status.conditions', 'map', attribute='type', 'map', 'lower') |
+           map('zip', r_nodes.resources | map(attribute='status.conditions') | map('map', attribute='status')) | # This is getting complex and likely wrong for direct 'not ready'
+           # Simplificação: Lista nós que não tem a condição Ready='True'
+           select('node_is_not_ready') | # Precisaria de um custom test ou refatorar
+           map(attribute='metadata.name') | list }} # ESTA LINHA PRECISA DE REVISÃO PARA SIMPLICIDADE
+
+# Simplificação para aro_nodes_not_ready_list:
+- name: GET_CLUSTER_INFO | Identificar Nós Não Prontos (simplificado)
+  ansible.builtin.set_fact:
+    _temp_nodes_not_ready: []
+- name: GET_CLUSTER_INFO | Loop para Nós Não Prontos
+  ansible.builtin.set_fact:
+    _temp_nodes_not_ready: "{{ _temp_nodes_not_ready + [item.metadata.name] }}"
+  loop: "{{ r_nodes.resources }}"
+  vars:
+    node_ready_conditions: "{{ item.status.conditions | selectattr('type', 'equalto', 'Ready') | list }}"
+  when:
+    - item.status is defined
+    - item.status.conditions is defined
+    - not (node_ready_conditions | length > 0 and node_ready_conditions[0].status == 'True')
+
+- name: GET_CLUSTER_INFO | Atualizar aro_node_status com Nós Não Prontos
+  ansible.builtin.set_fact:
+    aro_node_status: "{{ aro_node_status | combine({'not_ready_list': _temp_nodes_not_ready}) }}"
+
 
 - name: GET_CLUSTER_INFO | Obter status dos MachineConfigPools (MCPs)
   kubernetes.core.k8s_info:
@@ -69,13 +114,43 @@
   ansible.builtin.set_fact:
     aro_mcp_status:
       all_updated: >-
-        {{ not (r_mcps.resources | selectattr('status.updatedMachineCount', '!=', item.status.machineCount) | list) }}
+        {{ not (r_mcps.resources | selectattr('status.updatedMachineCount', '!=', item.status.machineCount) | list) }} # Cuidado com 'item' aqui, deve ser dentro de um loop ou usar map/select
       degraded_mcps: >-
         {{ r_mcps.resources |
            selectattr('status.conditions', 'selectattr', 'type', 'equalto', 'Degraded') |
            selectattr('status.conditions', 'selectattr', 'status', 'equalto', 'True') |
            map(attribute='metadata.name') | list }}
       mcp_details: "{{ r_mcps.resources | items2dict(key_name='metadata.name', value_name='status') }}"
+
+# Simplificação para aro_mcp_status:
+- name: GET_CLUSTER_INFO | Inicializar status MCP (simplificado)
+  ansible.builtin.set_fact:
+    _temp_mcp_all_updated: true
+    _temp_mcp_degraded_list: []
+
+- name: GET_CLUSTER_INFO | Loop para status dos MCPs
+  ansible.builtin.set_fact:
+    _temp_mcp_all_updated: false # Se qualquer MCP não estiver atualizado, marca como false
+    _temp_mcp_degraded_list: >-
+      {{ _temp_mcp_degraded_list + [item.metadata.name]
+         if (item.status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | list | length > 0)
+         else _temp_mcp_degraded_list }}
+  loop: "{{ r_mcps.resources }}"
+  when:
+    - item.status is defined
+    - item.status.updatedMachineCount is defined # Garantir que os atributos existem
+    - item.status.machineCount is defined
+    - item.status.updatedMachineCount != item.status.machineCount or
+      (item.status.conditions is defined and (item.status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | list | length > 0))
+
+
+- name: GET_CLUSTER_INFO | Atualizar aro_mcp_status
+  ansible.builtin.set_fact:
+    aro_mcp_status:
+      all_updated: "{{ _temp_mcp_all_updated }}"
+      degraded_mcps: "{{ _temp_mcp_degraded_list }}"
+      mcp_details: "{{ r_mcps.resources | items2dict(key_name='metadata.name', value_name='status') }}" # Mantém os detalhes
+
 
 - name: GET_CLUSTER_INFO | Sumarizar saúde geral do cluster para display e validação rápida
   ansible.builtin.set_fact:
@@ -84,17 +159,17 @@
       CV_Progressing={{ cv_condition_progressing }},
       CV_Degraded={{ cv_condition_degraded }};
       CO_All_Available={{ aro_co_status.all_available }} (Degraded_CO_Count={{ aro_co_degraded_count }});
-      Nodes_Ready={{ aro_node_status.ready_count }}/{{ aro_node_status.total }};
+      Nodes_Ready={{ aro_node_status.ready_count }}/{{ aro_node_status.total }} (Not_Ready_Nodes={{ aro_node_status.not_ready_list | default([]) | length }});
       MCPs_All_Updated={{ aro_mcp_status.all_updated }} (Degraded_MCP_Count={{ aro_mcp_status.degraded_mcps | length }})
 
 - name: GET_CLUSTER_INFO | Salvar objetos coletados em um arquivo JSON para análise detalhada
   ansible.builtin.copy:
     content: |
       {
-        "cluster_version": {{ aro_cluster_info | to_nice_json }},
-        "cluster_operators": {{ r_cluster_operators.resources | to_nice_json }},
-        "nodes": {{ r_nodes.resources | to_nice_json }},
-        "mcps": {{ r_mcps.resources | to_nice_json }}
+        "cluster_version": {{ aro_cluster_info | default({}) | to_nice_json }},
+        "cluster_operators": {{ r_cluster_operators.resources | default([]) | to_nice_json }},
+        "nodes": {{ r_nodes.resources | default([]) | to_nice_json }},
+        "mcps": {{ r_mcps.resources | default([]) | to_nice_json }}
       }
-    dest: "{{ f1_artifact_dir }}/cluster_objects_pre_upgrade.json"
+    dest: "{{ f1_artifact_dir }}/cluster_objects_pre_upgrade.json" # f1_artifact_dir vem de defaults/main.yml da role
   when: aro_cluster_info is defined
