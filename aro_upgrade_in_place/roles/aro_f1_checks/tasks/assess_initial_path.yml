@@ -1,8 +1,14 @@
-# ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/assess_initial_path.yml
 ---
+# roles/aro_f1_checks/tasks/assess_initial_path.yml
+
 - name: ASSESS_PATH | Extrair EUS major.minor atual da versão do cluster
   ansible.builtin.set_fact:
     current_eus_major_minor: "{{ aro_cluster_info.current_version.split('.')[0] }}.{{ aro_cluster_info.current_version.split('.')[1] }}"
+
+- name: "DEBUG | current_eus_major_minor (Após Extração)"
+  ansible.builtin.debug:
+    msg: "current_eus_major_minor: {{ current_eus_major_minor }}, Tipo: {{ current_eus_major_minor | type_debug }}"
+  when: ansible_verbosity > 1
 
 - name: ASSESS_PATH | Calcular índice EUS atual
   ansible.builtin.set_fact:
@@ -10,26 +16,50 @@
       {{ (eus_known_progression.index(current_eus_major_minor)
          if current_eus_major_minor in eus_known_progression else -1) | int }}
 
+- name: "DEBUG | current_eus_index_fact (Após Cálculo)"
+  ansible.builtin.debug:
+    msg: "current_eus_index_fact: {{ current_eus_index_fact }}, Tipo: {{ current_eus_index_fact | type_debug }}"
+  when: ansible_verbosity > 1
+
 - name: ASSESS_PATH | Calcular próximo índice EUS
   ansible.builtin.set_fact:
-    next_eus_index_fact: "{{ current_eus_index_fact + 1 }}" # current_eus_index_fact já é int
+    # Força current_eus_index_fact para int ANTES da adição
+    next_eus_index_fact: "{{ (current_eus_index_fact | int) + 1 }}"
+
+- name: "DEBUG | next_eus_index_fact (Após Cálculo)"
+  ansible.builtin.debug:
+    msg: "next_eus_index_fact: {{ next_eus_index_fact }}, Tipo: {{ next_eus_index_fact | type_debug }}"
+  when: ansible_verbosity > 1
 
 - name: ASSESS_PATH | Determinar condição para calcular próximo EUS lógico
   ansible.builtin.set_fact:
+    # Força ambos os lados da comparação para int
     _can_determine_next_logical_eus: >-
-      {{ (current_eus_index_fact != -1) and
-         (next_eus_index_fact < (eus_known_progression | length | int)) }} # Comparações entre inteiros
+      {{ ((current_eus_index_fact | int) != -1) and
+         ((next_eus_index_fact | int) < (eus_known_progression | length | int)) }}
+
+- name: "DEBUG | _can_determine_next_logical_eus (Após Cálculo)"
+  ansible.builtin.debug:
+    msg: "_can_determine_next_logical_eus: {{ _can_determine_next_logical_eus }}, Tipo: {{ _can_determine_next_logical_eus | type_debug }}"
+  when: ansible_verbosity > 1
 
 - name: ASSESS_PATH | Definir próximo EUS major.minor lógico
   ansible.builtin.set_fact:
+    # Força next_eus_index_fact para int ao ser usado como índice da lista
     next_logical_eus_major_minor: >-
-      {{ eus_known_progression[(next_eus_index_fact | int)] # Força int para índice
+      {{ eus_known_progression[(next_eus_index_fact | int)]
          if _can_determine_next_logical_eus
          else 'N/A' }}
 
+- name: "DEBUG | next_logical_eus_major_minor (Após Definição)"
+  ansible.builtin.debug:
+    msg: "next_logical_eus_major_minor: {{ next_logical_eus_major_minor }}, Tipo: {{ next_logical_eus_major_minor | type_debug }}"
+  when: ansible_verbosity > 1
+
 - name: ASSESS_PATH | Verificar se já estamos no EUS minor alvo ou além
   ansible.builtin.set_fact:
-    assessment_already_at_or_beyond_target_eus: "{{ (current_eus_major_minor >= target_final_eus_major_minor) }}" # Comparação de strings aqui é OK para versões X.Y
+    assessment_already_at_or_beyond_target_eus: "{{ (current_eus_major_minor >= target_final_eus_major_minor) }}"
+    # Comparação de string X.Y funciona bem aqui.
 
 - name: ASSESS_PATH | Procurar por atualização Z-stream recomendada DENTRO do canal EUS ATUAL
   vars:
@@ -64,7 +94,7 @@
       recommended_zstream_update: "{{ assessment_recommended_zstream_update }}"
       recommended_next_eus_update: "{{ assessment_recommended_next_eus_update | default({}) }}"
 
-- name: ASSESS_PATH | Debug da avaliação do caminho inicial
+- name: ASSESS_PATH | Debug da avaliação do caminho inicial (Sumário)
   ansible.builtin.debug:
     var: aro_initial_path_assessment
-    verbosity: 1
+    verbosity: 1 # Este debug final é sempre útil
