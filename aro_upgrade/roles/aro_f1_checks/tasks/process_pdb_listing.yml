@@ -1,0 +1,25 @@
+# roles/aro_f1_checks/tasks/process_pdb_listing.yml
+---
+# Vars esperadas: pdbs_resources_to_process, current_cluster_identifier, check_mode, artifact_dir
+
+- name: "Analisar PDBs listados e identificar os que não permitem disrupções"
+  ansible.builtin.set_fact:
+    # Este fato será usado pelo playbook principal da Fase 3 no assert
+    phase_pdbs_with_zero_disruptions_allowed_in_phase: |
+      {% set restricted_pdbs = [] %}
+      {% for pdb_item in pdbs_resources_to_process | default([]) if pdb_item.status is defined and pdb_item.status.disruptionsAllowed is defined %}
+        {% if (pdb_item.status.disruptionsAllowed | int) < 1 %}
+          {% set _ = restricted_pdbs.append(pdb_item.metadata.namespace ~ '/' ~ pdb_item.metadata.name) %}
+        {% endif %}
+      {% endfor %}
+      {{ restricted_pdbs }}
+
+- name: "Informar sobre PDBs restritivos encontrados"
+  ansible.builtin.debug:
+    msg: "INFO para {{ current_cluster_identifier }} ({{ check_mode }}): PDBs (incluindo de sistema) que não permitem disrupções: {{ phase_pdbs_with_zero_disruptions_allowed_in_phase }}"
+  when: phase_pdbs_with_zero_disruptions_allowed_in_phase is defined and (phase_pdbs_with_zero_disruptions_allowed_in_phase | length > 0)
+
+- name: "Salvar lista de PDBs processados"
+  ansible.builtin.copy:
+    content: "{{ pdbs_resources_to_process | default([]) | to_nice_json(indent=2) }}"
+    dest: "{{ artifact_dir }}/all_pdbs_list_{{ check_mode }}.json"

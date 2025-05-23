@@ -1,33 +1,50 @@
 # ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/get_cluster_info.yml
 ---
+# Vars opcionais para autenticação: _openshift_auth_host_role, _openshift_auth_api_key_role, _openshift_validate_certs_role
+
+- name: "GET_CLUSTER_INFO | Definir parâmetros de autenticação para tasks k8s"
+  ansible.builtin.set_fact:
+    k8s_auth_params_f1:
+      host: "{{ _openshift_auth_host_role | default(omit) }}"
+      api_key: "{{ _openshift_auth_api_key_role | default(omit) }}"
+      validate_certs: "{{ _openshift_validate_certs_role | default(omit) }}"
+  when: _openshift_auth_host_role is defined and _openshift_auth_api_key_role is defined
+
 - name: GET_CLUSTER_INFO | Obter informações do objeto ClusterVersion 'version'
   kubernetes.core.k8s_info:
     kind: ClusterVersion
     api_version: config.openshift.io/v1
     name: version
+    host: "{{ k8s_auth_params_f1.host | default(omit) }}"
+    api_key: "{{ k8s_auth_params_f1.api_key | default(omit) }}"
+    validate_certs: "{{ k8s_auth_params_f1.validate_certs | default(omit) }}"
   register: r_cv_details
-  failed_when: "r_cv_details.resources | length == 0"
+  failed_when: "r_cv_details.resources | default([]) | length == 0"
   retries: 3
   delay: 10
 
 - name: GET_CLUSTER_INFO | Definir fatos básicos do cluster a partir do ClusterVersion
   ansible.builtin.set_fact:
     aro_cluster_info:
-      cluster_version_obj: "{{ r_cv_details.resources[0] }}"
-      current_version: "{{ r_cv_details.resources[0].status.desired.version }}"
+      cluster_version_obj: "{{ r_cv_details.resources[0] | default({}) }}"
+      current_version: "{{ r_cv_details.resources[0].status.desired.version | default('') }}"
       current_channel: "{{ r_cv_details.resources[0].spec.channel | default('') }}"
-      current_image: "{{ r_cv_details.resources[0].status.desired.image }}"
+      current_image: "{{ r_cv_details.resources[0].status.desired.image | default('') }}"
       available_updates: "{{ r_cv_details.resources[0].status.availableUpdates | default([]) }}"
       history: "{{ r_cv_details.resources[0].status.history | default([]) }}"
       conditions: "{{ r_cv_details.resources[0].status.conditions | default([]) }}"
     cv_condition_available: "{{ ((r_cv_details.resources[0].status.conditions | default([]) | selectattr('type', 'equalto', 'Available') | map(attribute='status') | first | default('False')) == 'True') }}"
     cv_condition_progressing: "{{ ((r_cv_details.resources[0].status.conditions | default([]) | selectattr('type', 'equalto', 'Progressing') | map(attribute='status') | first | default('False')) == 'True') }}"
     cv_condition_degraded: "{{ ((r_cv_details.resources[0].status.conditions | default([]) | selectattr('type', 'equalto', 'Degraded') | map(attribute='status') | first | default('False')) == 'True') }}"
+  when: r_cv_details.resources is defined and r_cv_details.resources | length > 0
 
 - name: GET_CLUSTER_INFO | Obter status de todos os ClusterOperators
   kubernetes.core.k8s_info:
     kind: ClusterOperator
     api_version: config.openshift.io/v1
+    host: "{{ k8s_auth_params_f1.host | default(omit) }}"
+    api_key: "{{ k8s_auth_params_f1.api_key | default(omit) }}"
+    validate_certs: "{{ k8s_auth_params_f1.validate_certs | default(omit) }}"
   register: r_cluster_operators
 
 - name: GET_CLUSTER_INFO | Inicializar listas para status de ClusterOperator
@@ -55,13 +72,16 @@
   ansible.builtin.set_fact:
     aro_co_status:
       total: "{{ (r_cluster_operators.resources | default([]) | length) | int }}"
-      all_available: "{{ (_not_available_operator_names_list | length) == 0 }}"
+      all_available: "{{ (_not_available_operator_names_list | length | int) == 0 }}"
       degraded_operators: "{{ _degraded_operator_names_list }}"
     aro_co_degraded_count: "{{ (_degraded_operator_names_list | length) | int }}"
 
 - name: GET_CLUSTER_INFO | Obter status de todos os Nós (Nodes)
   kubernetes.core.k8s_info:
     kind: Node
+    host: "{{ k8s_auth_params_f1.host | default(omit) }}"
+    api_key: "{{ k8s_auth_params_f1.api_key | default(omit) }}"
+    validate_certs: "{{ k8s_auth_params_f1.validate_certs | default(omit) }}"
   register: r_nodes
 
 - name: GET_CLUSTER_INFO | Inicializar contadores/listas para status dos Nós
@@ -88,6 +108,9 @@
   kubernetes.core.k8s_info:
     kind: MachineConfigPool
     api_version: machineconfiguration.openshift.io/v1
+    host: "{{ k8s_auth_params_f1.host | default(omit) }}"
+    api_key: "{{ k8s_auth_params_f1.api_key | default(omit) }}"
+    validate_certs: "{{ k8s_auth_params_f1.validate_certs | default(omit) }}"
   register: r_mcps
 
 - name: GET_CLUSTER_INFO | Inicializar status para MCPs
@@ -99,7 +122,7 @@
   ansible.builtin.set_fact:
     _temp_mcp_all_updated_flag: >-
       {{ _temp_mcp_all_updated_flag
-         if (item.status.updatedMachineCount | int == item.status.machineCount | int )
+         if (item.status.updatedMachineCount | default(0) | int == item.status.machineCount | default(1) | int ) # Evitar erro se machineCount for 0
          else false }}
     _temp_mcp_degraded_list: >-
       {{ _temp_mcp_degraded_list + [item.metadata.name ~ '']
@@ -111,7 +134,7 @@
     loop_var: item
   when:
     - item.status is defined
-    - item.status.updatedMachineCount is defined # Garante que os atributos existem
+    - item.status.updatedMachineCount is defined
     - item.status.machineCount is defined
 
 - name: GET_CLUSTER_INFO | Inicializar dicionário para mcp_details
@@ -133,19 +156,24 @@
 - name: GET_CLUSTER_INFO | Definir fatos finais do status dos MCPs
   ansible.builtin.set_fact:
     aro_mcp_status:
-      all_updated: "{{ _temp_mcp_all_updated_flag }}" # Booleano
+      all_updated: "{{ _temp_mcp_all_updated_flag | bool }}"
       degraded_mcps: "{{ _temp_mcp_degraded_list }}"
       mcp_details: "{{ _temp_mcp_details_dict }}"
 
 - name: GET_CLUSTER_INFO | Sumarizar saúde geral do cluster
   ansible.builtin.set_fact:
     aro_cluster_health_summary: >-
-      CV_Available={{ cv_condition_available }},
-      CV_Progressing={{ cv_condition_progressing }},
-      CV_Degraded={{ cv_condition_degraded }};
-      CO_All_Available={{ aro_co_status.all_available }} (Degraded_CO_Count={{ aro_co_degraded_count | int }});
-      Nodes_Ready={{ aro_node_status.ready_count | int }}/{{ aro_node_status.total | int }} (Not_Ready_Nodes_Count={{ (aro_node_status.not_ready_list | length) | int }});
-      MCPs_All_Updated={{ aro_mcp_status.all_updated }} (Degraded_MCP_Count={{ (aro_mcp_status.degraded_mcps | length) | int }})
+      CV_Available={{ cv_condition_available | default(false) | bool }},
+      CV_Progressing={{ cv_condition_progressing | default(false) | bool }},
+      CV_Degraded={{ cv_condition_degraded | default(false) | bool }};
+      CO_All_Available={{ aro_co_status.all_available | default(false) | bool }} (Degraded_CO_Count={{ aro_co_degraded_count | default(0) | int }});
+      Nodes_Ready={{ aro_node_status.ready_count | default(0) | int }}/{{ aro_node_status.total | default(0) | int }} (Not_Ready_Nodes_Count={{ (aro_node_status.not_ready_list | default([]) | length) | int }});
+      MCPs_All_Updated={{ aro_mcp_status.all_updated | default(false) | bool }} (Degraded_MCP_Count={{ (aro_mcp_status.degraded_mcps | default([]) | length) | int }})
+  when: >
+    cv_condition_available is defined and cv_condition_progressing is defined and cv_condition_degraded is defined and
+    aro_co_status is defined and aro_co_status.all_available is defined and aro_co_degraded_count is defined and
+    aro_node_status is defined and aro_node_status.ready_count is defined and aro_node_status.total is defined and
+    aro_mcp_status is defined and aro_mcp_status.all_updated is defined and aro_mcp_status.degraded_mcps is defined
 
 - name: GET_CLUSTER_INFO | Salvar objetos coletados em um arquivo JSON
   ansible.builtin.copy:
@@ -156,5 +184,5 @@
         "nodes": {{ r_nodes.resources | default([]) | to_nice_json(indent=2) }},
         "mcps": {{ r_mcps.resources | default([]) | to_nice_json(indent=2) }}
       }
-    dest: "{{ artifact_dir }}/cluster_objects_{{ check_mode }}.json" # artifact_dir da role
+    dest: "{{ artifact_dir }}/cluster_objects_{{ check_mode }}.json"
   when: aro_cluster_info is defined

@@ -6,13 +6,36 @@
   connection: local
 
   vars:
+    # Variável OBRIGATÓRIA do Survey do AAP
     aro_cluster_identifier: "{{ aro_cluster_identifier_from_survey | default('unset_cluster_identifier') }}"
+
+    # --- Bloco Opcional para Autenticação User/Pass (se não usar Credencial Token do AAP) ---
+    # Se estas variáveis (openshift_api_url, cluster_user, cluster_pass) forem definidas
+    # (ex: via Survey do AAP ou extra_vars), a task de autenticação será executada.
+    # Caso contrário, assume-se que as credenciais K8S_AUTH_* estão no ambiente (padrão AAP).
+    # openshift_api_url: "{{ openshift_api_url_from_survey | default(omit) }}" # Ex: "https://api.mycluster.eastus.aroapp.io:6443"
+    # cluster_user: "{{ cluster_user_from_survey | default(omit) }}"
+    # cluster_pass: "{{ cluster_pass_from_survey | default(omit) }}"
+    # --- Fim do Bloco Opcional ---
 
   pre_tasks:
     - name: Validar se aro_cluster_identifier foi fornecido
       ansible.builtin.fail:
-        msg: "A variável 'aro_cluster_identifier' é obrigatória."
+        msg: "A variável 'aro_cluster_identifier' (nome do cluster) é obrigatória."
       when: aro_cluster_identifier == 'unset_cluster_identifier'
+
+    - name: "AUTENTICAÇÃO | Autenticar no cluster OpenShift (se usando user/pass)" #
+      redhat.openshift.openshift_auth: #
+        host: "{{ openshift_api_url }}" #
+        username: "{{ cluster_user }}" #
+        password: "{{ cluster_pass }}" #
+        validate_certs: false #
+      register: openshift_auth_results #
+      when: openshift_api_url is defined and cluster_user is defined and cluster_pass is defined # Só executa se as vars estiverem presentes
+      no_log: true # Para não expor a senha no log normal
+      # Ignora erro se já temos credenciais do AAP (K8S_AUTH_API_KEY presente)
+      # ou se a autenticação falhar mas K8S_AUTH_API_KEY existe (indicando que o token do AAP deve ser usado).
+      ignore_errors: "{{ lookup('env', 'K8S_AUTH_API_KEY') | default('', true) | length > 0 }}"
 
     - name: Exibir informações da execução da Fase 1
       ansible.builtin.debug:
@@ -26,19 +49,26 @@
       vars:
         current_cluster_identifier: "{{ aro_cluster_identifier }}"
         check_mode: "pre_upgrade"
+        # Passar resultados da autenticação para a role, se o método user/pass foi usado e bem-sucedido
+        # A role aro_f1_checks e seus includes precisarão adicionar os parâmetros
+        # host, api_key, validate_certs às tasks kubernetes.core.* se estas _vars forem definidas.
+        _openshift_auth_host_role: "{{ openshift_auth_results.openshift_auth.host | default(omit) if openshift_auth_results is defined and not openshift_auth_results.failed | default(false) else omit }}"
+        _openshift_auth_api_key_role: "{{ openshift_auth_results.openshift_auth.api_key | default(omit) if openshift_auth_results is defined and not openshift_auth_results.failed | default(false) else omit }}"
+        _openshift_validate_certs_role: false # Coerente com a task de auth, ou passar de uma var
 
   post_tasks:
     - name: Sumário Final da Fase 1 e Próximos Passos Sugeridos
       ansible.builtin.debug:
         msg:
           - "Cluster: {{ aro_cluster_identifier }}"
-          - "Saúde Geral do Cluster (Pré-Check): {{ aro_cluster_health_summary | default('Não avaliado devido a erro anterior na coleta de fatos.') }}"
+          - "Saúde Geral (Pré-Check): {{ aro_cluster_health_summary | default('Não avaliado ou erro na coleta.') }}"
           - "Próximo Salto de Upgrade Avaliado:"
-          - "  Versão Recomendada: {{ (aro_initial_path_assessment.chosen_next_hop_details.version | default('Nenhum salto imediato recomendado ou já no alvo.')) }}"
+          - "  Versão Recomendada: {{ (aro_initial_path_assessment.chosen_next_hop_details.version | default('N/A')) }}"
           - "  Imagem: {{ (aro_initial_path_assessment.chosen_next_hop_details.image | default('N/A')) }}"
           - "  Canal: {{ (aro_initial_path_assessment.chosen_next_hop_details.channel | default(aro_cluster_info.current_channel | default('N/A'))) }}"
-          - "  Acknowledgements Requeridos: {{ aro_initial_path_assessment.required_acknowledgements | default([]) }}"
-          - "APIs Depreciadas com 'removedInRelease': {{ deprecated_apis_info_list | default([]) }}"
+          - "  Acks Requeridos: {{ aro_initial_path_assessment.required_acknowledgements | default([]) }}"
+          - "APIs Depreciadas (com removedInRelease): {{ deprecated_apis_info_list | default([]) }}"
+          - "Pods Problemáticos (informativo): {{ (_problematic_pods_list_for_check | default([]) | length) }} encontrados."
           - "--------------------------------------------------"
           - "Ações da Fase 1 Concluídas."
           - "Artefatos salvos em: {{ local_artifact_base_path }}/{{ aro_cluster_identifier }}/fase_1/"
@@ -47,26 +77,25 @@
     - name: "ASSERT PRE-CHECKS | Verificar se o cluster está saudável para o upgrade"
       ansible.builtin.assert:
         that:
-          - cv_condition_available | default(false)
-          - not (cv_condition_progressing | default(true))
-          - not (cv_condition_degraded | default(true))
-          - aro_co_status.all_available | default(false)
+          - cv_condition_available | default(false) | bool
+          - not (cv_condition_progressing | default(true) | bool)
+          - not (cv_condition_degraded | default(true) | bool)
+          - aro_co_status.all_available | default(false) | bool
           - (aro_co_degraded_count | default(1) | int) == 0
-          - (aro_node_status.ready_count | default(0) | int) == (aro_node_status.total | default(1) | int) # Evitar divisão por zero ou comparação com None
-          - aro_mcp_status.all_updated | default(false)
+          - ((aro_node_status.total | default(0) | int) == 0) or ((aro_node_status.ready_count | default(0) | int) == (aro_node_status.total | int)) # Permite clusters sem nós worker (só masters) ou todos prontos
+          - aro_mcp_status.all_updated | default(false) | bool
           - (aro_mcp_status.degraded_mcps | default([]) | length | int) == 0
-          - aro_initial_path_assessment.chosen_next_hop_details.version is defined and aro_initial_path_assessment.chosen_next_hop_details.version != ""
-        fail_msg: "FALHA NOS PRE-CHECKS! O cluster {{ aro_cluster_identifier }} não está saudável ou um próximo salto válido não foi encontrado. Detalhes da saúde: {{ aro_cluster_health_summary | default('Erro na coleta de saúde') }}. Próximo Salto: {{ aro_initial_path_assessment.chosen_next_hop_details.version | default('N/A') }}"
-        success_msg: "SUCESSO NOS PRE-CHECKS: Cluster {{ aro_cluster_identifier }} está saudável e pronto para o próximo salto."
-      when: >
-        aro_cluster_info is defined and
+          - aro_initial_path_assessment.chosen_next_hop_details.version is defined and (aro_initial_path_assessment.chosen_next_hop_details.version | string != "")
+        fail_msg: "FALHA NOS PRE-CHECKS! Cluster {{ aro_cluster_identifier }} não está saudável ou um próximo salto válido não foi encontrado. Saúde: {{ aro_cluster_health_summary | default('Erro na coleta de saúde') }}. Próximo Salto: {{ aro_initial_path_assessment.chosen_next_hop_details.version | default('N/A') }}"
+        success_msg: "SUCESSO NOS PRE-CHECKS: Cluster {{ aro_cluster_identifier }} está saudável e pronto para o próximo salto: {{ aro_initial_path_assessment.chosen_next_hop_details.version }}"
+      when: > # Garante que todos os fatos existem antes da asserção
         cv_condition_available is defined and cv_condition_progressing is defined and cv_condition_degraded is defined and
         aro_co_status is defined and aro_co_status.all_available is defined and aro_co_degraded_count is defined and
         aro_node_status is defined and aro_node_status.ready_count is defined and aro_node_status.total is defined and
         aro_mcp_status is defined and aro_mcp_status.all_updated is defined and aro_mcp_status.degraded_mcps is defined and
         aro_initial_path_assessment is defined and aro_initial_path_assessment.chosen_next_hop_details is defined
 
-    - name: Set AAP Job Facts para Fase 2
+    - name: Set AAP Job Facts para Fase 2 (exportar variáveis para o próximo job no workflow)
       ansible.builtin.set_stats:
         data:
           aro_cluster_identifier_output: "{{ aro_cluster_identifier | string }}"
@@ -74,9 +103,12 @@
           next_hop_version_output: "{{ aro_initial_path_assessment.chosen_next_hop_details.version | default('') | string }}"
           next_hop_image_output: "{{ aro_initial_path_assessment.chosen_next_hop_details.image | default('') | string }}"
           next_hop_channel_output: "{{ aro_initial_path_assessment.chosen_next_hop_details.channel | default(aro_cluster_info.current_channel | default('')) | string }}"
-          required_acks_for_hop_output: "{{ aro_initial_path_assessment.required_acknowledgements | default([]) }}" # Lista de strings já é OK
+          required_acks_for_hop_output: "{{ aro_initial_path_assessment.required_acknowledgements | default([]) }}"
+          # Se usando auth user/pass, passe o token para a Fase 2
+          _openshift_auth_host_output: "{{ openshift_auth_results.openshift_auth.host | default(omit) if openshift_auth_results is defined and not openshift_auth_results.failed | default(false) else omit }}"
+          _openshift_auth_api_key_output: "{{ openshift_auth_results.openshift_auth.api_key | default(omit) if openshift_auth_results is defined and not openshift_auth_results.failed | default(false) else omit }}"
       when: >
         aro_initial_path_assessment is defined and
         aro_initial_path_assessment.chosen_next_hop_details is defined and
         aro_initial_path_assessment.chosen_next_hop_details.version is defined and
-        aro_initial_path_assessment.chosen_next_hop_details.version != ""
+        (aro_initial_path_assessment.chosen_next_hop_details.version | string != "")

@@ -1,0 +1,26 @@
+# roles/aro_f2_upgrade_tasks/tasks/apply_acks.yml
+---
+# Vars esperadas da role: _target_hop_version_role, _required_acknowledgements_for_hop_role
+# k8s_auth_params (de defaults, preenchido por _k8s_auth_params_role do play)
+
+- name: "ACK_MGMT | Aplicar Admin Acknowledgements para o salto para {{ _target_hop_version_role }}"
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: config.openshift.io/v1
+      kind: AdminAcknowledgement
+      metadata:
+        name: "{{ item_ack_name }}"
+      acknowledge: true
+    host: "{{ k8s_auth_params.host | default(omit) }}"
+    api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
+    validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}"
+  loop: "{{ _required_acknowledgements_for_hop_role | default([]) }}"
+  loop_control:
+    loop_var: item_ack_name
+    label: "Aplicando Ack: {{ item_ack_name }}"
+  when: _required_acknowledgements_for_hop_role is defined and (_required_acknowledgements_for_hop_role | length > 0)
+  retries: 3
+  delay: 10
+  register: r_apply_acks
+  changed_when: r_apply_acks.changed

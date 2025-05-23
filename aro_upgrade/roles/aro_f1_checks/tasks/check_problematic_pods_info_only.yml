@@ -1,0 +1,62 @@
+# roles/aro_f1_checks/tasks/check_problematic_pods_info_only.yml
+---
+# Vars globais da role: current_cluster_identifier, check_mode, artifact_dir
+# Vars opcionais para autenticação: _openshift_auth_host_role, _openshift_auth_api_key_role, _openshift_validate_certs_role
+# Vars de group_vars: system_namespace_patterns_to_exclude_from_info
+
+- name: "CHECK_PODS_INFO | Obter todos os Pods do cluster (para {{ check_mode }})"
+  kubernetes.core.k8s_info:
+    kind: Pod
+    api_version: v1
+    host: "{{ _openshift_auth_host_role | default(omit) }}"
+    api_key: "{{ _openshift_auth_api_key_role | default(omit) }}"
+    validate_certs: "{{ _openshift_validate_certs_role | default(omit) }}"
+  register: r_all_pods_for_check
+  ignore_errors: true
+
+- name: "CHECK_PODS_INFO | Filtrar pods para campos essenciais e excluir namespaces de sistema ({{ check_mode }})"
+  ansible.builtin.set_fact:
+    _filtered_pods_for_check: >-
+      {{ r_all_pods_for_check.resources | default([]) |
+         rejectattr('metadata.namespace', 'match', '(' + (system_namespace_patterns_to_exclude_from_info | join('|')) + ')') |
+         community.general.json_query(
+           "[].{
+             name: metadata.name,
+             namespace: metadata.namespace,
+             phase: status.phase,
+             reason: status.reason,
+             message: status.message,
+             containerStatuses: status.containerStatuses[]
+           }"
+         )
+      }}
+  vars:
+    system_namespace_patterns_to_exclude_from_info: "{{ system_namespace_patterns_to_exclude_from_info }}"
+  when: r_all_pods_for_check.resources is defined
+
+- name: "CHECK_PODS_INFO | Filtrar pods problemáticos (fase ou contêiner) (para {{ check_mode }})"
+  ansible.builtin.set_fact:
+    # Este fato será usado pelo playbook principal no sumário
+    _problematic_pods_list_for_check: >-
+      {{ _filtered_pods_for_check | default([]) | community.general.json_query(
+          "[?
+            phase=='Failed' || phase=='Unknown' ||
+            (phase=='Pending' && reason!='PodInitializing' && reason!='ContainerCreating') ||
+            (containerStatuses[?
+                (state.waiting != null && state.waiting.reason != 'PodInitializing' && state.waiting.reason != 'ContainerCreating' && state.waiting.reason != 'Completed') ||
+                (state.terminated != null && state.terminated.exitCode != `0` && state.terminated.reason != 'Completed')
+            ])
+           ].[{name: name, namespace: namespace, phase: phase, reason: reason, message: message, containers: containerStatuses[?state.terminated.exitCode != `0` || (state.waiting != null && state.waiting.reason != null && state.waiting.reason != 'PodInitializing' && state.waiting.reason != 'ContainerCreating' && state.waiting.reason != 'Completed')].{name: name, ready: ready, restartCount: restartCount, reason: state.terminated.reason || state.waiting.reason, exitCode: state.terminated.exitCode, signal: state.terminated.signal}}]"
+        ) }}
+  when: _filtered_pods_for_check is defined
+
+- name: "CHECK_PODS_INFO | Informar sobre Pods problemáticos ({{ check_mode }})"
+  ansible.builtin.debug:
+    msg: "INFO para {{ current_cluster_identifier }} ({{ check_mode }}): Encontrados {{ (_problematic_pods_list_for_check | default([]) | length) | int }} pods potencialmente problemáticos em namespaces de usuário. Detalhes no arquivo de artefatos."
+  when: _problematic_pods_list_for_check is defined
+
+- name: "CHECK_PODS_INFO | Salvar lista de Pods problemáticos ({{ check_mode }})"
+  ansible.builtin.copy:
+    content: "{{ _problematic_pods_list_for_check | default([]) | to_nice_json(indent=2) }}"
+    dest: "{{ artifact_dir }}/problematic_pods_{{ check_mode }}.json"
+  when: _problematic_pods_list_for_check is defined and (_problematic_pods_list_for_check | default([]) | length > 0)

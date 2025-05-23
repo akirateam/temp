@@ -1,9 +1,14 @@
-# ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/check_resources.yml
+# roles/aro_f1_checks/tasks/check_resources.yml
 ---
+# Vars opcionais para autenticação: _openshift_auth_host_role, _openshift_auth_api_key_role, _openshift_validate_certs_role
+
 - name: "CHECK_RESOURCES ({{ check_mode }}) | Verificar Métricas de Recursos (Exemplo NodeMetrics)"
   kubernetes.core.k8s_info:
     kind: NodeMetrics
     api_version: metrics.k8s.io/v1beta1
+    host: "{{ _openshift_auth_host_role | default(omit) }}"
+    api_key: "{{ _openshift_auth_api_key_role | default(omit) }}"
+    validate_certs: "{{ _openshift_validate_certs_role | default(omit) }}"
   register: r_node_metrics
   ignore_errors: yes
 

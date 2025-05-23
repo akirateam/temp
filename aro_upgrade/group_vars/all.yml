@@ -1,16 +1,56 @@
 # ansible_aro_upgrade_project/group_vars/all.yml
-local_artifact_base_path: "/var/lib/ansible/artifacts"
-target_final_eus_major_minor: "4.16" # Exemplo
+
+# Caminho base no control node (dentro do EE) para salvar artefatos de todas as fases
+local_artifact_base_path: "/var/lib/ansible/artifacts" # Ou /tmp, ou um volume montado no EE
+
+# Defina o EUS minor final que você deseja alcançar para os upgrades
+target_final_eus_major_minor: "4.16" # EXEMPLO, AJUSTE CONFORME SUA NECESSIDADE
+
+# Sequência conhecida de progressão para canais EUS (apenas os minors)
 eus_known_progression:
   - "4.10"
   - "4.12"
   - "4.14"
   - "4.16"
   - "4.18"
-system_namespace_patterns_to_exclude: # Usado em check_deprecated_apis e check_problematic_pods
+  # Adicione futuras versões EUS
+
+# Para PDBs: a instrução foi gerenciar TODOS os PDBs, incluindo os de sistema.
+# Se, APESAR DISSO, você precisar excluir namespaces EXTREMAMENTE críticos do gerenciamento de PDBs,
+# defina esta lista. Deixe vazio ou comentada para realmente afetar todos os PDBs (com cautela).
+# critical_system_namespaces_pdb_untouchable:
+#   - "openshift-etcd"
+#   - "openshift-kube-apiserver"
+
+# Para check_deprecated_apis_info_only.yml e check_problematic_pods_info_only.yml
+# para filtrar namespaces de sistema na listagem (apenas informativo).
+system_namespace_patterns_to_exclude_from_info:
   - "^openshift$"
   - "^openshift-.*"
   - "^kube-.*"
   - "^default$"
   - "^logging$"
   - "^monitoring$"
+  - "^velero$"
+  - "^node-observability-operator$"
+  - "^openshift-marketplace$"
+  - "^openshift-logging$"
+  - "^openshift-operators$"
+  - "^openshift-user-workload-monitoring$"
+  - "^openshift-machine-config-operator$"
+  - "^openshift-image-registry$"
+  - "^openshift-insights$"
+  - "^openshift-console$"
+  - "^openshift-console-operator$"
+  - "^openshift-authentication$"
+  - "^openshift-apiserver$"
+  - "^openshift-sdn$"
+  - "^openshift-service-ca$"
+  - "^openshift-service-ca-operator$"
+
+# Variáveis para autenticação (se optar por user/pass em vez de token AAP)
+# Estes seriam tipicamente definidos como 'extra vars' ou em um Survey do AAP.
+# Exemplo de como você os tem em seus defaults:
+# openshift_api_url_template: "https://api.{{ cluster_name_from_survey }}.{{ domain_cluster_from_survey }}:6443"
+# cluster_user_template: "kubeadmin"
+# cluster_pass_template: "SENHA_AQUI"

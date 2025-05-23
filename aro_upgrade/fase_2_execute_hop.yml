@@ -6,25 +6,44 @@
   connection: local
 
   vars:
-    # Estas variáveis são esperadas como entrada deste Job Template (via set_stats da Fase 1 ou Survey/Workflow)
-    aro_cluster_identifier: "{{ aro_cluster_identifier_from_input | default('unset_cluster_identifier') }}"
-    target_hop_version: "{{ target_hop_version_from_input | default('') }}"
-    target_hop_image: "{{ target_hop_image_from_input | default('') }}"
-    target_hop_channel: "{{ target_hop_channel_from_input | default('') }}" # Canal para este salto específico
-    current_cluster_channel_fact: "{{ current_cluster_channel_from_input | default('') }}" # Canal atual antes do salto
-    required_acknowledgements_for_hop: "{{ required_acknowledgements_from_input | default([]) }}"
+    # Estas variáveis são esperadas como entrada deste Job Template
+    aro_cluster_identifier: "{{ aro_cluster_identifier_output | default(aro_cluster_identifier_from_survey | default('unset_cluster_identifier')) }}"
+    target_hop_version: "{{ next_hop_version_output | default('') }}"
+    target_hop_image: "{{ next_hop_image_output | default('') }}"
+    target_hop_channel: "{{ next_hop_channel_output | default('') }}"
+    current_cluster_channel_fact: "{{ current_cluster_channel_output | default('') }}" # Canal atual ANTES deste hop
+    required_acknowledgements_for_hop: "{{ required_acks_for_hop_output | default([]) }}"
 
-    # business_namespaces_for_pdb_management vem de group_vars/all.yml
+    # Se usando auth user/pass e passou os resultados da Fase 1:
+    _openshift_auth_host: "{{ openshift_api_host_output | default(omit) }}"
+    _openshift_auth_api_key: "{{ openshift_api_key_output | default(omit) }}"
+    _openshift_validate_certs: false # Ou passada como variável
+
+    # Se a Fase 2 precisa de autenticação user/pass e não recebeu da Fase 1:
+    # openshift_api_url_f2: "{{ openshift_api_url_from_survey_f2 | default(omit) }}"
+    # cluster_user_f2: "{{ cluster_user_from_survey_f2 | default(omit) }}"
+    # cluster_pass_f2: "{{ cluster_pass_from_survey_f2 | default(omit) }}"
 
   pre_tasks:
     - name: Validar entradas para Fase 2
       ansible.builtin.fail:
-        msg: "Variáveis de entrada (aro_cluster_identifier, target_hop_version, target_hop_image, target_hop_channel) são obrigatórias."
+        msg: "Variáveis de entrada da Fase 1 (identificador, versão/imagem/canal do hop) são obrigatórias."
       when: >
         aro_cluster_identifier == 'unset_cluster_identifier' or
         target_hop_version == '' or
         target_hop_image == '' or
         target_hop_channel == ''
+
+    - name: "AUTENTICAÇÃO F2 | (Re)Autenticar no cluster OpenShift (se usando user/pass e não recebeu token)"
+      redhat.openshift.openshift_auth:
+        host: "{{ openshift_api_url_f2 | default(_openshift_auth_host | default(lookup('env', 'K8S_AUTH_HOST'))) }}" # Prioriza vars específicas da F2, depois da F1, depois do ambiente
+        username: "{{ cluster_user_f2 }}" # Precisa ser definido se este bloco for usado
+        password: "{{ cluster_pass_f2 }}" # Precisa ser definido se este bloco for usado
+        validate_certs: "{{ _openshift_validate_certs | default(false) }}"
+      register: openshift_auth_results_f2 # Resultado desta autenticação específica da Fase 2
+      when: (_openshift_auth_host is not defined or _openshift_auth_api_key is not defined) and (openshift_api_url_f2 is defined and cluster_user_f2 is defined and cluster_pass_f2 is defined)
+      no_log: true
+      ignore_errors: "{{ lookup('env', 'K8S_AUTH_API_KEY') | default('', true) | length > 0 }}"
 
     - name: Exibir informações da execução da Fase 2
       ansible.builtin.debug:
@@ -32,44 +51,41 @@
           - "Iniciando Fase 2 para o Cluster: {{ aro_cluster_identifier }}"
           - "Alvo do Salto: Versão={{ target_hop_version }}, Imagem={{ target_hop_image }}, Canal={{ target_hop_channel }}"
           - "Acknowledgements para este salto: {{ required_acknowledgements_for_hop }}"
-          - "Namespaces para gerenciamento de PDB: {{ business_namespaces_for_pdb_management }}"
 
   roles:
-    - role: aro_f2_upgrade_tasks # Nova role para encapsular a lógica do salto
+    - role: aro_f2_upgrade_tasks
       vars:
-        # Passando todas as variáveis necessárias para a role
-        # Os nomes aqui devem corresponder ao que a role espera
-        # ou a role usa diretamente as vars definidas no play (acima)
-        # Para clareza, podemos passá-las explicitamente:
-        # _target_hop_version: "{{ target_hop_version }}"
-        # _target_hop_image: "{{ target_hop_image }}"
-        # _target_hop_channel: "{{ target_hop_channel }}"
-        # _current_cluster_channel: "{{ current_cluster_channel_fact }}"
-        # _required_acknowledgements: "{{ required_acknowledgements_for_hop }}"
-        # _business_namespaces_for_pdb_mgmt: "{{ business_namespaces_for_pdb_management }}"
-        # _cluster_identifier_for_artifacts: "{{ aro_cluster_identifier }}" # Para nomear artefatos da Fase 2
-        # _artifact_base_path: "{{ local_artifact_base_path }}"
-        # (A role acessará as vars do play diretamente, então não é estritamente necessário repassar se os nomes forem os mesmos)
-        # Mas vamos definir um diretório de artefatos para a Fase 2
-        f2_artifact_dir: "{{ local_artifact_base_path }}/{{ aro_cluster_identifier }}/fase_2_hop_{{ target_hop_version | replace('.', '_') }}"
-
+        _aro_cluster_identifier_role: "{{ aro_cluster_identifier }}"
+        _target_hop_version_role: "{{ target_hop_version }}"
+        _target_hop_image_role: "{{ target_hop_image }}"
+        _target_hop_channel_role: "{{ target_hop_channel }}"
+        _current_cluster_channel_fact_role: "{{ current_cluster_channel_fact }}"
+        _required_acknowledgements_for_hop_role: "{{ required_acknowledgements_for_hop }}"
+        _f2_artifact_dir_role: "{{ local_artifact_base_path }}/{{ aro_cluster_identifier }}/fase_2_hop_{{ target_hop_version | regex_replace('[^a-zA-Z0-9_.-]', '_') }}"
+        _k8s_auth_params_role:
+          host: "{{ openshift_auth_results_f2.openshift_auth.host | default(_openshift_auth_host | default(omit)) }}"
+          api_key: "{{ openshift_auth_results_f2.openshift_auth.api_key | default(_openshift_auth_api_key | default(omit)) }}"
+          validate_certs: "{{ _openshift_validate_certs | default(false) }}"
 
   post_tasks:
     - name: Sumário Final da Fase 2 (Salto para {{ target_hop_version }})
       ansible.builtin.debug:
         msg:
           - "Cluster: {{ aro_cluster_identifier }}"
-          - "Salto para {{ target_hop_version }} concluído (ou falhou - verificar status do Job)."
-          - "PDBs devem ter sido restaurados se o upgrade do hop foi bem-sucedido ou em caso de falha."
-          - "Artefatos (se houver) para este salto salvos em: {{ local_artifact_base_path }}/{{ aro_cluster_identifier }}/fase_2_hop_{{ target_hop_version | replace('.', '_') }}"
-      # A lógica de 'upgrade_hop_successful' seria um fato definido dentro da role aro_f2_upgrade_tasks
+          - "Salto para {{ target_hop_version }} {{ 'CONCLUÍDO COM SUCESSO.' if upgrade_hop_successful | default(false) else 'FALHOU.' }}"
+          - "PDBs devem ter sido restaurados."
+          - "MCPs de Worker/Infra devem ter sido despausados."
+          - "Artefatos (se houver) para este salto salvos em: {{ _f2_artifact_dir_role }}"
       when: upgrade_hop_successful is defined
 
-    # # Exemplo de como você poderia passar dados para o próximo Job Template no AAP
-    # - name: Set AAP Job Facts for post-check or next hop assessment
-    #   ansible.builtin.set_stats:
-    #     data:
-    #       cluster_identifier: "{{ aro_cluster_identifier }}"
-    #       last_upgraded_version: "{{ target_hop_version }}" # Se bem-sucedido
-    #       hop_outcome: "{{ 'success' if upgrade_hop_successful else 'failed' }}"
-    #   when: upgrade_hop_successful is defined
+    - name: "Set AAP Job Facts para Fase 3 (Pós-Check)"
+      ansible.builtin.set_stats:
+        data:
+          aro_cluster_identifier_output: "{{ aro_cluster_identifier | string }}"
+          # Envia a versão alvo do hop se sucesso, senão a versão atual do cluster ANTES deste hop
+          expected_version_after_hop_output: "{{ target_hop_version | string if upgrade_hop_successful | default(false) else _current_cluster_channel_fact_role | default('') | string }}"
+          hop_outcome_output: "{{ 'success' if upgrade_hop_successful | default(false) else 'failed' }}"
+          # Passar credenciais para Fase 3 se necessário
+          _openshift_auth_host_output: "{{ _k8s_auth_params_role.host | default(omit) }}"
+          _openshift_auth_api_key_output: "{{ _k8s_auth_params_role.api_key | default(omit) }}"
+      when: upgrade_hop_successful is defined

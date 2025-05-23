@@ -1,41 +1,53 @@
-# ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/check_deprecated_apis_info_only.yml
+# roles/aro_f1_checks/tasks/check_deprecated_apis_info_only.yml
 ---
+# Vars opcionais para autenticação: _openshift_auth_host_role, _openshift_auth_api_key_role, _openshift_validate_certs_role
+
 - name: "DEPRECATED_APIS_INFO | Tentar obter APIRequestCounts via k8s_info"
   kubernetes.core.k8s_info:
     kind: APIRequestCount
-    api_version: apiserver.openshift.io/v1 # Confirmar se esta é a apiVersion correta para seu cluster
+    api_version: apiserver.openshift.io/v1 # Confirmar esta apiVersion para seu ambiente
+    host: "{{ _openshift_auth_host_role | default(omit) }}"
+    api_key: "{{ _openshift_auth_api_key_role | default(omit) }}"
+    validate_certs: "{{ _openshift_validate_certs_role | default(omit) }}"
   register: r_api_request_counts_k8s_info
   ignore_errors: true
 
-- name: "DEPRECATED_APIS_INFO | Tentar obter APIRequestCounts via 'oc' command se k8s_info falhou ou não retornou"
+- name: "DEPRECATED_APIS_INFO | Tentar obter APIRequestCounts via 'oc' command (fallback)"
   ansible.builtin.command: "oc get apirequestcounts -o json"
   register: r_oc_api_request_counts
   changed_when: false
   ignore_errors: true
-  when: r_api_request_counts_k8s_info.resources is not defined or not r_api_request_counts_k8s_info.resources
+  when: >
+    (r_api_request_counts_k8s_info.resources is not defined or not r_api_request_counts_k8s_info.resources) and
+    # Só roda 'oc' se não estamos usando explicitamente _openshift_auth_host/api_key,
+    # pois 'oc' dependeria de um login prévio ou do KUBECONFIG do EE.
+    (_openshift_auth_host_role is not defined or _openshift_auth_api_key_role is not defined)
 
 - name: "DEPRECATED_APIS_INFO | Processar APIRequestCounts coletados"
   ansible.builtin.set_fact:
     _processed_api_counts_items_list: >-
       {% if r_api_request_counts_k8s_info.resources is defined and r_api_request_counts_k8s_info.resources %}
       {{ r_api_request_counts_k8s_info.resources }}
-      {% elif r_oc_api_request_counts.stdout is defined and r_oc_api_request_counts.stdout != "" %}
+      {% elif r_oc_api_request_counts.rc is defined and r_oc_api_request_counts.rc == 0 and r_oc_api_request_counts.stdout is defined and r_oc_api_request_counts.stdout != "" %}
       {{ (r_oc_api_request_counts.stdout | from_json).items | default([]) }}
       {% else %}
       []
       {% endif %}
 
-- name: "DEPRECATED_APIS_INFO | Filtrar APIs com 'removedInRelease' e uso recente"
+- name: "DEPRECATED_APIS_INFO | Filtrar APIs com 'removedInRelease'"
   ansible.builtin.set_fact:
+    # Este fato será usado pelo playbook principal no sumário
     deprecated_apis_info_list: >-
-      {{ _processed_api_counts_items_list |
+      {{ _processed_api_counts_items_list | default([]) |
          selectattr('status.removedInRelease', 'defined') |
          selectattr('status.removedInRelease', '!=', none) |
-         # Adicionar filtro opcional para 'status.requestCount > 0' se quiser ver apenas as usadas
+         # Opcional: filtrar apenas as que tiveram requests recentes
+         # selectattr('status.requestCount', 'defined') |
          # selectattr('status.requestCount', '>', 0) |
          map(attribute='metadata.name') | list }}
-  when: _processed_api_counts_items_list | length > 0
+  when: (_processed_api_counts_items_list | default([]) | length > 0)
 
 - name: "DEPRECATED_APIS_INFO | Informar sobre APIs depreciadas com 'removedInRelease'"
   ansible.builtin.debug:
-    msg: "INFO para {{ current_cluster_identifier }}: APIs com 'removedInRelease' definido: {{ deprecated_apis_info_list | default(['Nenhuma encontrada ou erro na coleta.']) }}"
+    msg: "INFO para {{ current_cluster_identifier }} ({{ check_mode }}): APIs com 'removedInRelease' definido: {{ deprecated_apis_info_list | default(['Nenhuma encontrada ou erro na coleta.']) }}"
+  # A variável deprecated_apis_info_list é definida como fato e pode ser usada no sumário do playbook.

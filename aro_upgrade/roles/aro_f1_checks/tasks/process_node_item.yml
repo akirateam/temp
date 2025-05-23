@@ -1,35 +1,39 @@
 # roles/aro_f1_checks/tasks/process_node_item.yml
 ---
-- name: "Definir 'node_is_actually_ready_now' para o Nó: {{ item.metadata.name | default('Nó sem nome') }}"
+# Vars globais da task: item (nó atual)
+# Vars globais da role/play: _temp_nodes_ready_count, _temp_nodes_not_ready_list
+
+- name: "Definir 'node_is_actually_ready_now' para o Nó: {{ item.metadata.name | default('Nó sem nome METADATA') }}"
   ansible.builtin.set_fact:
     node_is_actually_ready_now: >-
       {{ (item.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0) }}
+  when: item.status is defined and item.status.conditions is defined
 
-- name: "DEBUG NÓ ({{ item.metadata.name | default('Nó sem nome') }}) - ANTES da atualização de contadores"
+- name: "DEBUG NÓ ({{ item.metadata.name | default('Nó sem nome METADATA') }}) - ANTES da atualização de contadores"
   ansible.builtin.debug:
     msg:
-      - "Nó: {{ item.metadata.name | default('Nó sem nome') }}"
-      - "Condição node_is_actually_ready_now: {{ node_is_actually_ready_now }}"
-      - "Valor ATUAL _temp_nodes_ready_count: {{ _temp_nodes_ready_count }}"
-      - "Tipo ATUAL _temp_nodes_ready_count: {{ _temp_nodes_ready_count | type_debug }}"
-      - "Lista ATUAL _temp_nodes_not_ready_list: {{ _temp_nodes_not_ready_list }}"
+      - "Nó: {{ item.metadata.name | default('Nó sem nome METADATA') }}"
+      - "Condição node_is_actually_ready_now: {{ node_is_actually_ready_now | default('Condição não pôde ser avaliada') }}"
+      - "Valor ATUAL _temp_nodes_ready_count: {{ _temp_nodes_ready_count | default(0) }}"
+      - "Tipo ATUAL _temp_nodes_ready_count: {{ (_temp_nodes_ready_count | default(0)) | type_debug }}"
+      - "Lista ATUAL _temp_nodes_not_ready_list: {{ _temp_nodes_not_ready_list | default([]) }}"
   when: ansible_verbosity > 2 # Use -vvv para ver este debug
 
-- name: "ATUALIZAR _temp_nodes_ready_count SE Nó ({{ item.metadata.name | default('Nó sem nome') }}) está pronto"
+- name: "ATUALIZAR _temp_nodes_ready_count SE Nó está pronto"
   ansible.builtin.set_fact:
-    _temp_nodes_ready_count: "{{ (_temp_nodes_ready_count | int) + 1 }}"
-  when: node_is_actually_ready_now
+    _temp_nodes_ready_count: "{{ (_temp_nodes_ready_count | default(0) | int) + 1 }}"
+  when: node_is_actually_ready_now | default(false) | bool
 
-- name: "ATUALIZAR _temp_nodes_not_ready_list SE Nó ({{ item.metadata.name | default('Nó sem nome') }}) NÃO está pronto"
+- name: "ATUALIZAR _temp_nodes_not_ready_list SE Nó NÃO está pronto"
   ansible.builtin.set_fact:
-    _temp_nodes_not_ready_list: "{{ _temp_nodes_not_ready_list + [item.metadata.name ~ ''] }}"
-  when: not node_is_actually_ready_now
+    _temp_nodes_not_ready_list: "{{ _temp_nodes_not_ready_list | default([]) + [(item.metadata.name | default('Nó_sem_nome_em_lista') ~ '')] }}"
+  when: not (node_is_actually_ready_now | default(false) | bool)
 
-- name: "DEBUG NÓ ({{ item.metadata.name | default('Nó sem nome') }}) - APÓS atualização de contadores"
+- name: "DEBUG NÓ ({{ item.metadata.name | default('Nó sem nome METADATA') }}) - APÓS atualização de contadores"
   ansible.builtin.debug:
     msg:
-      - "Nó: {{ item.metadata.name | default('Nó sem nome') }}"
-      - "Valor NOVO _temp_nodes_ready_count: {{ _temp_nodes_ready_count }}"
-      - "Tipo NOVO _temp_nodes_ready_count: {{ _temp_nodes_ready_count | type_debug }}"
-      - "Lista NOVA _temp_nodes_not_ready_list: {{ _temp_nodes_not_ready_list }}"
-  when: ansible_verbosity > 2 # Use -vvv para ver este debug
+      - "Nó: {{ item.metadata.name | default('Nó sem nome METADATA') }}"
+      - "Valor NOVO _temp_nodes_ready_count: {{ _temp_nodes_ready_count | default(0) }}"
+      - "Tipo NOVO _temp_nodes_ready_count: {{ (_temp_nodes_ready_count | default(0)) | type_debug }}"
+      - "Lista NOVA _temp_nodes_not_ready_list: {{ _temp_nodes_not_ready_list | default([]) }}"
+  when: ansible_verbosity > 2

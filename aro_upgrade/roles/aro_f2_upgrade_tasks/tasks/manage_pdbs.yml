@@ -1,0 +1,96 @@
+# roles/aro_f2_upgrade_tasks/tasks/manage_pdbs.yml
+---
+# Ação: pdb_action ("disable" ou "restore")
+# Vars esperadas: _f2_artifact_dir_role (para salvar backups YAML)
+# k8s_auth_params (de defaults, preenchido por _k8s_auth_params_role do play)
+
+- name: "PDB_MGMT ({{ pdb_action }}) | Inicializar/Recuperar lista de backup de PDBs originais"
+  ansible.builtin.set_fact:
+    # Usamos um nome de fato com escopo global no play para persistir entre chamadas de 'disable' e 'restore'
+    global_original_pdb_definitions_backup: "{{ global_original_pdb_definitions_backup | default([]) }}"
+  run_once: true
+
+- name: "PDB_MGMT ({{ pdb_action }}) | Descobrir TODOS os PDBs do cluster para 'disable'"
+  kubernetes.core.k8s_info:
+    api_version: policy/v1
+    kind: PodDisruptionBudget
+    host: "{{ k8s_auth_params.host | default(omit) }}"
+    api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
+    validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}"
+  register: r_all_pdbs_in_cluster_for_action
+  when: pdb_action == "disable"
+
+- name: "PDB_MGMT ({{ pdb_action }}) | Definir lista de PDBs a serem gerenciados (todos)"
+  ansible.builtin.set_fact:
+    pdbs_to_be_managed_this_action: "{{ r_all_pdbs_in_cluster_for_action.resources | default([]) }}"
+  when: pdb_action == "disable" and r_all_pdbs_in_cluster_for_action.resources is defined
+
+- name: "PDB_MGMT ({{ pdb_action }}) | Fazer backup, 'ZERAR' PDBs e Salvar YAML Original"
+  vars:
+    pdb_current_item: "{{ item_pdb_to_manage }}" # Para clareza dentro do block
+    pdb_original_spec_var: "{{ pdb_current_item.spec | default({}) }}"
+    pdb_full_definition_backup_var: "{{ pdb_current_item }}"
+    disable_patch_payload_var: |
+      {% if pdb_original_spec_var.minAvailable is defined %}
+      [{ "op": "replace", "path": "/spec/minAvailable", "value": 0 }]
+      {% elif pdb_original_spec_var.maxUnavailable is defined %}
+      [{ "op": "replace", "path": "/spec/maxUnavailable", "value": "100%" }]
+      {% else %}
+      []
+      {% endif %}
+  block:
+    - name: "PDB_MGMT ({{ pdb_action }}) | Armazenar definição original de {{ pdb_current_item.metadata.namespace }}/{{ pdb_current_item.metadata.name }}"
+      ansible.builtin.set_fact:
+        global_original_pdb_definitions_backup: >-
+          {{ global_original_pdb_definitions_backup + [pdb_full_definition_backup_var] }}
+      # Só adiciona ao backup se ainda não estiver lá (para idempotência se rodar de novo)
+      when: not (global_original_pdb_definitions_backup | selectattr('metadata.name', 'equalto', pdb_current_item.metadata.name) | selectattr('metadata.namespace', 'equalto', pdb_current_item.metadata.namespace) | list)
+
+    - name: "PDB_MGMT ({{ pdb_action }}) | Salvar YAML original de {{ pdb_current_item.metadata.namespace }}/{{ pdb_current_item.metadata.name }} em artefatos"
+      ansible.builtin.copy:
+        content: "{{ pdb_full_definition_backup_var | to_nice_yaml(indent=2) }}"
+        dest: "{{ _f2_artifact_dir_role }}/pdb_backup_{{ pdb_current_item.metadata.namespace | regex_replace('[^a-zA-Z0-9_]', '_') }}_{{ pdb_current_item.metadata.name | regex_replace('[^a-zA-Z0-9_]', '_') }}.yaml"
+      check_mode: no # Salvar o backup mesmo em check_mode
+      when: pdb_full_definition_backup_var is defined
+
+    - name: "PDB_MGMT ({{ pdb_action }}) | Aplicar patch para 'ZERAR' {{ pdb_current_item.metadata.namespace }}/{{ pdb_current_item.metadata.name }}"
+      kubernetes.core.k8s_patch:
+        api_version: policy/v1
+        kind: PodDisruptionBudget
+        name: "{{ pdb_current_item.metadata.name }}"
+        namespace: "{{ pdb_current_item.metadata.namespace }}"
+        patch: "{{ disable_patch_payload_var }}"
+        host: "{{ k8s_auth_params.host | default(omit) }}"
+        api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
+        validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}"
+      when: disable_patch_payload_var | length > 0
+      register: r_pdb_disable_patch
+      changed_when: r_pdb_disable_patch.changed
+
+  loop: "{{ pdbs_to_be_managed_this_action | default([]) }}"
+  loop_control:
+    loop_var: item_pdb_to_manage # Renomeado para evitar conflito com 'item' de outro loop possível
+    label: "Disable PDB: {{ item_pdb_to_manage.metadata.namespace }}/{{ item_pdb_to_manage.metadata.name }}"
+  when: pdb_action == "disable"
+
+- name: "PDB_MGMT ({{ pdb_action }}) | RESTAURAR PDBs a partir das definições originais"
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ item_backup_pdb.original_full_definition }}" # Usa a definição completa salva
+    host: "{{ k8s_auth_params.host | default(omit) }}"
+    api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
+    validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}"
+    force: true # Para forçar a substituição se a spec mudou para o estado "zerado"
+  loop: "{{ global_original_pdb_definitions_backup | default([]) }}"
+  loop_control:
+    loop_var: item_backup_pdb
+    label: "Restore PDB: {{ item_backup_pdb.metadata.namespace }}/{{ item_backup_pdb.metadata.name }}"
+  when: pdb_action == "restore"
+  register: r_pdb_restore
+  changed_when: r_pdb_restore.changed
+
+- name: "PDB_MGMT ({{ pdb_action }}) | Limpar lista de backup após restauração bem-sucedida (opcional)"
+  ansible.builtin.set_fact:
+    global_original_pdb_definitions_backup: []
+  when: pdb_action == "restore" and not (r_pdb_restore.results | default([]) | selectattr('failed', 'defined') | selectattr('failed', 'equalto', true) | list)
+  # Só limpa se todas as restaurações foram bem-sucedidas

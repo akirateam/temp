@@ -1,0 +1,7 @@
+# ansible_aro_upgrade_project/roles/aro_f2_upgrade_tasks/defaults/main.yml
+---
+# _f2_artifact_dir_role é passado via vars da role no playbook fase_2_execute_hop.yml
+# _k8s_auth_params_role também é passado, contendo host, api_key, validate_certs se auth user/pass for usado.
+# Se _k8s_auth_params_role não for passado ou estiver vazio, as tasks kubernetes.core.*
+# dependerão das variáveis de ambiente K8S_AUTH_* injetadas pelo AAP.
+k8s_auth_params: "{{ _k8s_auth_params_role | default({}) }}"

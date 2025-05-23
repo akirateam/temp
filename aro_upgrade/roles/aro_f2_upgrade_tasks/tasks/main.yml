@@ -1,0 +1,77 @@
+# ansible_aro_upgrade_project/roles/aro_f2_upgrade_tasks/tasks/main.yml
+---
+# Vars da role (passadas do playbook que a chama):
+# _aro_cluster_identifier_role, _target_hop_version_role, _target_hop_image_role,
+# _target_hop_channel_role, _current_cluster_channel_fact_role,
+# _required_acknowledgements_for_hop_role, _f2_artifact_dir_role
+# k8s_auth_params (de defaults, preenchido por _k8s_auth_params_role do play)
+
+- name: Criar diretório de artefatos para a Fase 2 (Salto para {{ _target_hop_version_role }})
+  ansible.builtin.file:
+    path: "{{ _f2_artifact_dir_role }}"
+    state: directory
+    mode: '0755'
+  run_once: true
+
+- name: "FASE 2 - INÍCIO DO SALTO PARA {{ _target_hop_version_role }} (Cluster: {{ _aro_cluster_identifier_role }})"
+  block:
+    - name: Incluir tasks para aplicar Admin Acknowledgements
+      ansible.builtin.include_tasks: apply_acks.yml
+
+    - name: Incluir tasks para gerenciar PDBs (Ação: Desabilitar/Zerar)
+      ansible.builtin.include_tasks: manage_pdbs.yml
+      vars:
+        pdb_action: "disable" # Passa a ação para o include
+
+    - name: Incluir tasks para pausar MCPs, disparar e monitorar o upgrade do OpenShift
+      ansible.builtin.include_tasks: trigger_and_monitor_upgrade.yml
+      # Esta task interna definirá 'upgrade_hop_successful_internal: true' em caso de sucesso
+
+  rescue:
+    - name: "RESCUE | Ocorreu um erro durante o salto para {{ _target_hop_version_role }}"
+      ansible.builtin.debug:
+        msg: "ATENÇÃO: O upgrade para {{ _target_hop_version_role }} falhou. Iniciando restauração de PDBs e despause de MCPs."
+
+    - name: Incluir tasks para gerenciar PDBs (Ação: Restaurar após falha)
+      ansible.builtin.include_tasks: manage_pdbs.yml
+      vars:
+        pdb_action: "restore"
+      ignore_errors: true # Tenta o melhor para restaurar
+
+    - name: "RESCUE | Despausar MCPs de Worker/Infra em caso de falha (melhor esforço)"
+      kubernetes.core.k8s_patch:
+        kind: MachineConfigPool
+        name: "{{ item_mcp_name_rescue }}"
+        api_version: machineconfiguration.openshift.io/v1
+        patch:
+          - op: replace # ou remove
+            path: /spec/paused
+            value: false
+        host: "{{ k8s_auth_params.host | default(omit) }}"
+        api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
+        validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}"
+      loop: "{{ _worker_infra_mcp_name_list_fact | default([]) }}" # Este fato é definido em trigger_and_monitor_upgrade.yml
+      loop_control:
+        loop_var: item_mcp_name_rescue
+      ignore_errors: true
+      when: _worker_infra_mcp_name_list_fact is defined # Só executa se a lista de MCPs foi definida
+
+    - name: "RESCUE | Sinalizar falha no salto e falhar o play"
+      ansible.builtin.set_fact:
+        upgrade_hop_successful: false # Para o post_task do playbook principal
+      ansible.builtin.fail:
+        msg: "O processo de upgrade para {{ _target_hop_version_role }} falhou. PDBs e MCPs (tentativa) restaurados/despausados."
+
+# Este bloco executa se o 'block' principal foi bem-sucedido
+- name: "PÓS-UPGRADE DO HOP | Restaurar PDBs se o salto para {{ _target_hop_version_role }} foi bem-sucedido"
+  ansible.builtin.include_tasks: manage_pdbs.yml
+  vars:
+    pdb_action: "restore"
+  when: upgrade_hop_successful_internal | default(false) # Fato definido por trigger_and_monitor_upgrade.yml
+
+# O despause dos MCPs workers/infra já ocorre dentro de trigger_and_monitor_upgrade.yml após os masters serem atualizados.
+
+- name: "PÓS-UPGRADE DO HOP | Definir fato de sucesso para o playbook principal"
+  ansible.builtin.set_fact:
+    upgrade_hop_successful: "{{ upgrade_hop_successful_internal | default(false) }}"
+  # Este fato é usado no post_tasks do playbook fase_2_execute_hop.yml

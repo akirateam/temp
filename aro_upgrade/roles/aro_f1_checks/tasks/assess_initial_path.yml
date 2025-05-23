@@ -1,81 +1,101 @@
 # roles/aro_f1_checks/tasks/assess_initial_path.yml
 ---
+# Vars globais da role/play: aro_cluster_info, eus_known_progression, target_final_eus_major_minor
+
 - name: ASSESS_PATH | Extrair EUS major.minor atual da versão do cluster
   ansible.builtin.set_fact:
-    current_eus_major_minor: "{{ aro_cluster_info.current_version.split('.')[0] }}.{{ aro_cluster_info.current_version.split('.')[1] }}"
+    current_eus_major_minor: >-
+      {{ (aro_cluster_info.current_version | default('')).split('.')[0] + '.' +
+         (aro_cluster_info.current_version | default('')).split('.')[1]
+         if (aro_cluster_info.current_version | default('')).count('.') >= 1
+         else aro_cluster_info.current_version | default('') }}
+  when: aro_cluster_info.current_version is defined and aro_cluster_info.current_version != ""
 
 - name: "DEBUG | current_eus_major_minor (Após Extração)"
   ansible.builtin.debug:
-    msg: "current_eus_major_minor: {{ current_eus_major_minor }}, Tipo: {{ current_eus_major_minor | type_debug }}"
+    msg: "current_eus_major_minor: {{ current_eus_major_minor | default('N/A') }}, Tipo: {{ (current_eus_major_minor | default('')) | type_debug }}"
   when: ansible_verbosity > 1
 
 - name: ASSESS_PATH | Calcular índice EUS atual
   ansible.builtin.set_fact:
     current_eus_index_fact: >-
-      {{ (eus_known_progression.index(current_eus_major_minor)
-         if current_eus_major_minor in eus_known_progression else -1) | int }}
+      {{ (eus_known_progression.index(current_eus_major_minor | string)
+         if (current_eus_major_minor | string) in eus_known_progression else -1) | int }}
+  when: current_eus_major_minor is defined
 
 - name: "DEBUG | current_eus_index_fact (Após Cálculo)"
   ansible.builtin.debug:
-    msg: "current_eus_index_fact: {{ current_eus_index_fact }}, Tipo: {{ current_eus_index_fact | type_debug }}"
-  when: ansible_verbosity > 1
+    msg: "current_eus_index_fact: {{ current_eus_index_fact | default('N/A') }}, Tipo: {{ (current_eus_index_fact | default(0)) | type_debug }}"
+  when: ansible_verbosity > 1 and current_eus_index_fact is defined
 
 - name: ASSESS_PATH | Calcular próximo índice EUS
   ansible.builtin.set_fact:
-    next_eus_index_fact: "{{ (current_eus_index_fact | int) + 1 }}"
+    # Garante que current_eus_index_fact é int antes da soma
+    next_eus_index_fact: "{{ (current_eus_index_fact | default(0) | int) + 1 }}"
+  when: current_eus_index_fact is defined
 
 - name: "DEBUG | next_eus_index_fact (Após Cálculo)"
   ansible.builtin.debug:
-    msg: "next_eus_index_fact: {{ next_eus_index_fact }}, Tipo: {{ next_eus_index_fact | type_debug }}"
-  when: ansible_verbosity > 1
+    msg: "next_eus_index_fact: {{ next_eus_index_fact | default('N/A') }}, Tipo: {{ (next_eus_index_fact | default(0)) | type_debug }}"
+  when: ansible_verbosity > 1 and next_eus_index_fact is defined
 
 - name: ASSESS_PATH | Determinar condição para calcular próximo EUS lógico
   vars:
-    _length_eus_known_progression: "{{ eus_known_progression | length | int }}"
+    _length_eus_known_progression: "{{ (eus_known_progression | default([]) | length | int) }}"
   ansible.builtin.set_fact:
     _can_determine_next_logical_eus: >-
-      {{ ((current_eus_index_fact | int) != -1) and
-         ((next_eus_index_fact | int) < _length_eus_known_progression) }}
+      {{ ((current_eus_index_fact | default(0) | int) != -1) and
+         ((next_eus_index_fact | default(0) | int) < _length_eus_known_progression) }}
+  when: current_eus_index_fact is defined and next_eus_index_fact is defined
 
 - name: "DEBUG | _can_determine_next_logical_eus e _length_eus_known_progression"
   ansible.builtin.debug:
     msg:
-      - "_can_determine_next_logical_eus: {{ _can_determine_next_logical_eus }}, Tipo: {{ _can_determine_next_logical_eus | type_debug }}"
-      - "_length_eus_known_progression: {{ _length_eus_known_progression }}, Tipo: {{ _length_eus_known_progression | type_debug }}"
-  when: ansible_verbosity > 1
+      - "_can_determine_next_logical_eus: {{ _can_determine_next_logical_eus | default('N/A') }}, Tipo: {{ (_can_determine_next_logical_eus | default(false)) | type_debug }}"
+      - "_length_eus_known_progression: {{ eus_known_progression | default([]) | length | int }}"
+  when: ansible_verbosity > 1 and _can_determine_next_logical_eus is defined
 
 - name: ASSESS_PATH | Definir próximo EUS major.minor lógico
   ansible.builtin.set_fact:
     next_logical_eus_major_minor: >-
-      {{ eus_known_progression[(next_eus_index_fact | int)]
-         if _can_determine_next_logical_eus
+      {{ eus_known_progression[(next_eus_index_fact | default(0) | int)]
+         if (_can_determine_next_logical_eus | default(false) | bool)
          else 'N/A' }}
+  when: next_eus_index_fact is defined and _can_determine_next_logical_eus is defined
 
 - name: "DEBUG | next_logical_eus_major_minor (Após Definição)"
   ansible.builtin.debug:
-    msg: "next_logical_eus_major_minor: {{ next_logical_eus_major_minor }}, Tipo: {{ next_logical_eus_major_minor | type_debug }}"
-  when: ansible_verbosity > 1
+    msg: "next_logical_eus_major_minor: {{ next_logical_eus_major_minor | default('N/A') }}, Tipo: {{ (next_logical_eus_major_minor | default('')) | type_debug }}"
+  when: ansible_verbosity > 1 and next_logical_eus_major_minor is defined
 
 - name: ASSESS_PATH | Verificar se já estamos no EUS minor alvo ou além
   ansible.builtin.set_fact:
-    assessment_already_at_or_beyond_target_eus: "{{ (current_eus_major_minor >= target_final_eus_major_minor) }}"
+    assessment_already_at_or_beyond_target_eus: >-
+      {{ (current_eus_major_minor | string >= target_final_eus_major_minor | string)
+         if current_eus_major_minor is defined and target_final_eus_major_minor is defined
+         else false }}
 
 - name: ASSESS_PATH | Determinar o payload do próximo salto escolhido e Acknowledgements
   vars:
+    _current_eus_mjr_mnr_str: "{{ current_eus_major_minor | default('') | string }}"
+    _current_ver_str: "{{ aro_cluster_info.current_version | default('') | string }}"
+    _next_logical_eus_mjr_mnr_str: "{{ next_logical_eus_major_minor | default('') | string }}"
     _zstream_candidates: >-
       {{ aro_cluster_info.available_updates | default([]) |
          selectattr('channel', 'defined') |
-         selectattr('version', 'match', '^' + current_eus_major_minor + '\\..*') |
-         selectattr('channel', 'equalto', 'eus-' + current_eus_major_minor) |
-         selectattr('version', '>', aro_cluster_info.current_version) |
+         selectattr('version', 'match', '^' + _current_eus_mjr_mnr_str + '\\..*') |
+         selectattr('channel', 'equalto', 'eus-' + _current_eus_mjr_mnr_str) |
+         selectattr('version', '>', _current_ver_str) | # Comparação de string de versão é geralmente OK
          sort(attribute='version', reverse=true) }}
     _recommended_zstream_hop: "{{ _zstream_candidates | first | default({}) }}"
     _next_eus_candidates: >-
       {{ aro_cluster_info.available_updates | default([]) |
          selectattr('channel', 'defined') |
-         selectattr('version', 'match', '^' + next_logical_eus_major_minor + '\\..*') |
-         selectattr('channel', 'equalto', 'eus-' + next_logical_eus_major_minor) |
-         sort(attribute='version') if next_logical_eus_major_minor != 'N/A' and next_logical_eus_major_minor is defined else [] }}
+         selectattr('version', 'match', '^' + _next_logical_eus_mjr_mnr_str + '\\..*') |
+         selectattr('channel', 'equalto', 'eus-' + _next_logical_eus_mjr_mnr_str) |
+         sort(attribute='version')
+         if _next_logical_eus_mjr_mnr_str != 'N/A' and _next_logical_eus_mjr_mnr_str is defined
+         else [] }}
     _recommended_next_eus_hop: "{{ _next_eus_candidates | first | default({}) }}"
   ansible.builtin.set_fact:
     _chosen_hop_payload: >-
@@ -85,23 +105,31 @@
          if _recommended_next_eus_hop.version is defined
          else {} }}
     _required_acks: >-
-      {{ (_chosen_hop_payload.message | default('') | regex_findall('(acknowledge-[a-zA-Z0-9.-]+)') | unique | list)
-         if _chosen_hop_payload.message is defined and _chosen_hop_payload.message
+      {{ ((_chosen_hop_payload.message | default('')) | string | regex_findall('(acknowledge-[a-zA-Z0-9.-]+)') | unique | list)
+         if _chosen_hop_payload is defined and _chosen_hop_payload.message is defined
          else [] }}
+  when: >
+    current_eus_major_minor is defined and
+    aro_cluster_info.current_version is defined and
+    next_logical_eus_major_minor is defined
 
 - name: ASSESS_PATH | Armazenar resultado da avaliação do caminho inicial
   ansible.builtin.set_fact:
     aro_initial_path_assessment:
-      current_eus_is_target_or_beyond: "{{ assessment_already_at_or_beyond_target_eus }}"
-      current_eus_on_cluster: "{{ current_eus_major_minor }}"
-      next_logical_eus_channel: "{{ 'eus-' + next_logical_eus_major_minor if next_logical_eus_major_minor != 'N/A' and next_logical_eus_major_minor is defined else 'N/A' }}"
-      chosen_next_hop_details: "{{ _chosen_hop_payload }}"
-      required_acknowledgements: "{{ _required_acks }}"
-      # Mantendo os específicos para clareza se necessário, embora chosen_next_hop_details seja o principal
-      recommended_zstream_update: "{{ _recommended_zstream_hop }}"
-      recommended_next_eus_update: "{{ _recommended_next_eus_hop }}"
+      current_eus_is_target_or_beyond: "{{ assessment_already_at_or_beyond_target_eus | default(false) | bool }}"
+      current_eus_on_cluster: "{{ current_eus_major_minor | default('N/A') | string }}"
+      next_logical_eus_channel: >-
+        {{ ('eus-' + (next_logical_eus_major_minor | string))
+           if next_logical_eus_major_minor != 'N/A' and next_logical_eus_major_minor is defined
+           else 'N/A' }}
+      chosen_next_hop_details: "{{ _chosen_hop_payload | default({}) }}"
+      required_acknowledgements: "{{ _required_acks | default([]) }}"
+      # Mantidos para debug/info, mas _chosen_hop_payload é o principal
+      recommended_zstream_update: "{{ _recommended_zstream_hop | default({}) }}"
+      recommended_next_eus_update: "{{ _recommended_next_eus_hop | default({}) }}"
 
 - name: ASSESS_PATH | Debug da avaliação do caminho inicial (Sumário)
   ansible.builtin.debug:
     var: aro_initial_path_assessment
-    verbosity: 1
+    verbosity: 1 # Sempre mostrar este sumário
+  when: aro_initial_path_assessment is defined

@@ -1,1 +1,3 @@
-f1_artifact_dir: "{{ local_artifact_base_path }}/{{ current_cluster_identifier }}/{{ check_mode | default('pre_upgrade') }}"
+# ansible_aro_upgrade_project/roles/aro_f1_checks/defaults/main.yml
+---
+artifact_dir: "{{ local_artifact_base_path }}/{{ current_cluster_identifier | default('unknown_cluster') }}/{{ check_mode | default('pre_upgrade') }}"
