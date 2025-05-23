@@ -1,27 +1,35 @@
-# ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/assess_initial_path.yml
 ---
 # Analisa as atualizações disponíveis e sugere próximos passos lógicos.
-# Utiliza aro_cluster_info (coletado em get_cluster_info.yml)
-# e target_final_eus_major_minor, eus_known_progression (de group_vars).
 
 - name: ASSESS_PATH | Extrair EUS major.minor atual da versão do cluster
   ansible.builtin.set_fact:
     current_eus_major_minor: "{{ aro_cluster_info.current_version.split('.')[0] }}.{{ aro_cluster_info.current_version.split('.')[1] }}"
 
-- name: ASSESS_PATH | Determinar próximo EUS major.minor lógico na sequência de progressão EUS
-  vars:
-    # Encontra o índice do EUS atual na lista de progressão conhecida
-    current_eus_index_in_progression_var: >- # Renomeado para evitar confusão de escopo imediato
-      {{ eus_known_progression.index(current_eus_major_minor)
-         if current_eus_major_minor in eus_known_progression else -1 }}
-    # Calcula o índice do próximo EUS na lista, garantindo que o índice atual é inteiro
-    next_eus_index_in_progression_var: "{{ (current_eus_index_in_progression_var | int) + 1 }}"
+- name: ASSESS_PATH | Calcular índice EUS atual
   ansible.builtin.set_fact:
-    # Define o próximo EUS minor lógico se estiver dentro dos limites da lista de progressão
+    # Calcula o índice do EUS atual ou -1 se não encontrado. Garante que é um inteiro.
+    current_eus_index_fact: >-
+      {{ (eus_known_progression.index(current_eus_major_minor)
+         if current_eus_major_minor in eus_known_progression else -1) | int }}
+
+- name: ASSESS_PATH | Calcular próximo índice EUS
+  ansible.builtin.set_fact:
+    # Adiciona 1 ao índice atual. O resultado será um inteiro.
+    next_eus_index_fact: "{{ current_eus_index_fact + 1 }}"
+
+- name: ASSESS_PATH | Determinar condição para calcular próximo EUS lógico
+  ansible.builtin.set_fact:
+    # Define uma flag booleana para a condição. Ambas as comparações são entre inteiros.
+    _can_determine_next_logical_eus: >-
+      {{ (current_eus_index_fact != -1) and
+         (next_eus_index_fact < (eus_known_progression | length)) }}
+
+- name: ASSESS_PATH | Definir próximo EUS major.minor lógico
+  ansible.builtin.set_fact:
+    # Usa a flag e o índice para acessar a lista. O índice é forçado para int por segurança.
     next_logical_eus_major_minor: >-
-      {{ eus_known_progression[(next_eus_index_in_progression_var | int)] # Força int para índice da lista
-         if (current_eus_index_in_progression_var | int != -1) and
-            ((next_eus_index_in_progression_var | int) < (eus_known_progression | length | int)) # Força int para comparação
+      {{ eus_known_progression[(next_eus_index_fact | int)]
+         if _can_determine_next_logical_eus
          else 'N/A' }}
 
 - name: ASSESS_PATH | Verificar se já estamos no EUS minor alvo ou além
@@ -30,6 +38,7 @@
 
 - name: ASSESS_PATH | Procurar por atualização Z-stream recomendada DENTRO do canal EUS ATUAL
   vars:
+    # Esta expressão complexa permanece, mas é para um propósito diferente (filtragem de dados)
     zstream_update_candidates_in_current_eus: >-
       {{ aro_cluster_info.available_updates |
          selectattr('channel', 'defined') |
@@ -42,16 +51,15 @@
 
 - name: ASSESS_PATH | Procurar por atualização para o PRÓXIMO canal EUS lógico
   vars:
-    # Usar a variável de fato 'next_logical_eus_major_minor' que já foi calculada e é mais segura
     next_eus_update_candidates: >-
       {{ aro_cluster_info.available_updates |
          selectattr('channel', 'defined') |
-         selectattr('version', 'match', '^' + next_logical_eus_major_minor + '\\..*') | # Usa o fato já definido
-         selectattr('channel', 'equalto', 'eus-' + next_logical_eus_major_minor) | # Usa o fato já definido
+         selectattr('version', 'match', '^' + next_logical_eus_major_minor + '\\..*') |
+         selectattr('channel', 'equalto', 'eus-' + next_logical_eus_major_minor) |
          sort(attribute='version') }}
   ansible.builtin.set_fact:
     assessment_recommended_next_eus_update: "{{ next_eus_update_candidates | first | default({}) }}"
-  when: next_logical_eus_major_minor != 'N/A' and next_logical_eus_major_minor is defined # Checa o fato
+  when: next_logical_eus_major_minor != 'N/A' and next_logical_eus_major_minor is defined
 
 - name: ASSESS_PATH | Armazenar resultado da avaliação do caminho inicial para fácil acesso
   ansible.builtin.set_fact:
