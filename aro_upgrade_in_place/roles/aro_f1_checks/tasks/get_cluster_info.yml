@@ -124,12 +124,38 @@
     # A condição para _temp_mcp_all_updated_flag já trata o update,
     # aqui o when é mais para garantir que os dados existem para a checagem de degradado.
 
+# Em roles/aro_f1_checks/tasks/get_cluster_info.yml
+
+# ... (tasks anteriores, incluindo a iteração sobre MCPs para _temp_mcp_all_updated_flag e _temp_mcp_degraded_list) ...
+
+# Adicione esta task de debug ANTES de "Definir fatos finais do status dos MCPs"
+- name: "DEBUG MCPs | Conteúdo de r_mcps.resources antes de construir mcp_details"
+  ansible.builtin.debug:
+    var: r_mcps.resources
+    verbosity: 2 # Mostra com -vv ou mais
+
+- name: GET_CLUSTER_INFO | Inicializar dicionário para mcp_details
+  ansible.builtin.set_fact:
+    _temp_mcp_details_dict: {}
+
+- name: GET_CLUSTER_INFO | Popular mcp_details de forma segura
+  ansible.builtin.set_fact:
+    _temp_mcp_details_dict: "{{ _temp_mcp_details_dict | combine({ item.metadata.name: item.status }) }}"
+  loop: "{{ r_mcps.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name | default('MCP_ITEM_SEM_NOME_METADATA') }}"
+    loop_var: item
+  when:
+    - item.metadata is defined
+    - item.metadata.name is defined
+    - item.status is defined # Importante para o valor do dicionário
+
 - name: GET_CLUSTER_INFO | Definir fatos finais do status dos MCPs
   ansible.builtin.set_fact:
     aro_mcp_status:
       all_updated: "{{ _temp_mcp_all_updated_flag }}"
       degraded_mcps: "{{ _temp_mcp_degraded_list }}"
-      mcp_details: "{{ r_mcps.resources | items2dict(key_name='metadata.name', value_name='status') }}"
+      mcp_details: "{{ _temp_mcp_details_dict }}" # Usa o dicionário construído de forma segura
 
 - name: GET_CLUSTER_INFO | Sumarizar saúde geral do cluster para display e validação rápida
   ansible.builtin.set_fact:
