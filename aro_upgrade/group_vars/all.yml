@@ -1,0 +1,16 @@
+# ansible_aro_upgrade_project/group_vars/all.yml
+local_artifact_base_path: "/var/lib/ansible/artifacts"
+target_final_eus_major_minor: "4.16" # Exemplo
+eus_known_progression:
+  - "4.10"
+  - "4.12"
+  - "4.14"
+  - "4.16"
+  - "4.18"
+system_namespace_patterns_to_exclude: # Usado em check_deprecated_apis e check_problematic_pods
+  - "^openshift$"
+  - "^openshift-.*"
+  - "^kube-.*"
+  - "^default$"
+  - "^logging$"
+  - "^monitoring$"

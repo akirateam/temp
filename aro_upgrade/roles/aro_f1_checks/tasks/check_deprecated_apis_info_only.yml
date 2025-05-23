@@ -1,0 +1,41 @@
+# ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/check_deprecated_apis_info_only.yml
+---
+- name: "DEPRECATED_APIS_INFO | Tentar obter APIRequestCounts via k8s_info"
+  kubernetes.core.k8s_info:
+    kind: APIRequestCount
+    api_version: apiserver.openshift.io/v1 # Confirmar se esta é a apiVersion correta para seu cluster
+  register: r_api_request_counts_k8s_info
+  ignore_errors: true
+
+- name: "DEPRECATED_APIS_INFO | Tentar obter APIRequestCounts via 'oc' command se k8s_info falhou ou não retornou"
+  ansible.builtin.command: "oc get apirequestcounts -o json"
+  register: r_oc_api_request_counts
+  changed_when: false
+  ignore_errors: true
+  when: r_api_request_counts_k8s_info.resources is not defined or not r_api_request_counts_k8s_info.resources
+
+- name: "DEPRECATED_APIS_INFO | Processar APIRequestCounts coletados"
+  ansible.builtin.set_fact:
+    _processed_api_counts_items_list: >-
+      {% if r_api_request_counts_k8s_info.resources is defined and r_api_request_counts_k8s_info.resources %}
+      {{ r_api_request_counts_k8s_info.resources }}
+      {% elif r_oc_api_request_counts.stdout is defined and r_oc_api_request_counts.stdout != "" %}
+      {{ (r_oc_api_request_counts.stdout | from_json).items | default([]) }}
+      {% else %}
+      []
+      {% endif %}
+
+- name: "DEPRECATED_APIS_INFO | Filtrar APIs com 'removedInRelease' e uso recente"
+  ansible.builtin.set_fact:
+    deprecated_apis_info_list: >-
+      {{ _processed_api_counts_items_list |
+         selectattr('status.removedInRelease', 'defined') |
+         selectattr('status.removedInRelease', '!=', none) |
+         # Adicionar filtro opcional para 'status.requestCount > 0' se quiser ver apenas as usadas
+         # selectattr('status.requestCount', '>', 0) |
+         map(attribute='metadata.name') | list }}
+  when: _processed_api_counts_items_list | length > 0
+
+- name: "DEPRECATED_APIS_INFO | Informar sobre APIs depreciadas com 'removedInRelease'"
+  ansible.builtin.debug:
+    msg: "INFO para {{ current_cluster_identifier }}: APIs com 'removedInRelease' definido: {{ deprecated_apis_info_list | default(['Nenhuma encontrada ou erro na coleta.']) }}"

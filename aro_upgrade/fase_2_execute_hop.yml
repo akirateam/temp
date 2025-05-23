@@ -1,0 +1,75 @@
+# ansible_aro_upgrade_project/playbooks/fase_2_execute_hop.yml
+---
+- name: Fase 2 - Executar Salto de Upgrade para Cluster ARO
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars:
+    # Estas variáveis são esperadas como entrada deste Job Template (via set_stats da Fase 1 ou Survey/Workflow)
+    aro_cluster_identifier: "{{ aro_cluster_identifier_from_input | default('unset_cluster_identifier') }}"
+    target_hop_version: "{{ target_hop_version_from_input | default('') }}"
+    target_hop_image: "{{ target_hop_image_from_input | default('') }}"
+    target_hop_channel: "{{ target_hop_channel_from_input | default('') }}" # Canal para este salto específico
+    current_cluster_channel_fact: "{{ current_cluster_channel_from_input | default('') }}" # Canal atual antes do salto
+    required_acknowledgements_for_hop: "{{ required_acknowledgements_from_input | default([]) }}"
+
+    # business_namespaces_for_pdb_management vem de group_vars/all.yml
+
+  pre_tasks:
+    - name: Validar entradas para Fase 2
+      ansible.builtin.fail:
+        msg: "Variáveis de entrada (aro_cluster_identifier, target_hop_version, target_hop_image, target_hop_channel) são obrigatórias."
+      when: >
+        aro_cluster_identifier == 'unset_cluster_identifier' or
+        target_hop_version == '' or
+        target_hop_image == '' or
+        target_hop_channel == ''
+
+    - name: Exibir informações da execução da Fase 2
+      ansible.builtin.debug:
+        msg:
+          - "Iniciando Fase 2 para o Cluster: {{ aro_cluster_identifier }}"
+          - "Alvo do Salto: Versão={{ target_hop_version }}, Imagem={{ target_hop_image }}, Canal={{ target_hop_channel }}"
+          - "Acknowledgements para este salto: {{ required_acknowledgements_for_hop }}"
+          - "Namespaces para gerenciamento de PDB: {{ business_namespaces_for_pdb_management }}"
+
+  roles:
+    - role: aro_f2_upgrade_tasks # Nova role para encapsular a lógica do salto
+      vars:
+        # Passando todas as variáveis necessárias para a role
+        # Os nomes aqui devem corresponder ao que a role espera
+        # ou a role usa diretamente as vars definidas no play (acima)
+        # Para clareza, podemos passá-las explicitamente:
+        # _target_hop_version: "{{ target_hop_version }}"
+        # _target_hop_image: "{{ target_hop_image }}"
+        # _target_hop_channel: "{{ target_hop_channel }}"
+        # _current_cluster_channel: "{{ current_cluster_channel_fact }}"
+        # _required_acknowledgements: "{{ required_acknowledgements_for_hop }}"
+        # _business_namespaces_for_pdb_mgmt: "{{ business_namespaces_for_pdb_management }}"
+        # _cluster_identifier_for_artifacts: "{{ aro_cluster_identifier }}" # Para nomear artefatos da Fase 2
+        # _artifact_base_path: "{{ local_artifact_base_path }}"
+        # (A role acessará as vars do play diretamente, então não é estritamente necessário repassar se os nomes forem os mesmos)
+        # Mas vamos definir um diretório de artefatos para a Fase 2
+        f2_artifact_dir: "{{ local_artifact_base_path }}/{{ aro_cluster_identifier }}/fase_2_hop_{{ target_hop_version | replace('.', '_') }}"
+
+
+  post_tasks:
+    - name: Sumário Final da Fase 2 (Salto para {{ target_hop_version }})
+      ansible.builtin.debug:
+        msg:
+          - "Cluster: {{ aro_cluster_identifier }}"
+          - "Salto para {{ target_hop_version }} concluído (ou falhou - verificar status do Job)."
+          - "PDBs devem ter sido restaurados se o upgrade do hop foi bem-sucedido ou em caso de falha."
+          - "Artefatos (se houver) para este salto salvos em: {{ local_artifact_base_path }}/{{ aro_cluster_identifier }}/fase_2_hop_{{ target_hop_version | replace('.', '_') }}"
+      # A lógica de 'upgrade_hop_successful' seria um fato definido dentro da role aro_f2_upgrade_tasks
+      when: upgrade_hop_successful is defined
+
+    # # Exemplo de como você poderia passar dados para o próximo Job Template no AAP
+    # - name: Set AAP Job Facts for post-check or next hop assessment
+    #   ansible.builtin.set_stats:
+    #     data:
+    #       cluster_identifier: "{{ aro_cluster_identifier }}"
+    #       last_upgraded_version: "{{ target_hop_version }}" # Se bem-sucedido
+    #       hop_outcome: "{{ 'success' if upgrade_hop_successful else 'failed' }}"
+    #   when: upgrade_hop_successful is defined

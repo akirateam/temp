@@ -1,0 +1,18 @@
+# roles/aro_f1_checks/tasks/check_custom_configs.yml
+---
+- name: "CHECK_CUSTOM_CONFIGS ({{ check_mode }}) | Listar TODOS os PodDisruptionBudgets (PDBs) do Cluster"
+  kubernetes.core.k8s_info:
+    api_version: policy/v1
+    kind: PodDisruptionBudget
+  register: r_all_cluster_pdbs_in_phase
+  ignore_errors: yes
+
+- name: "CHECK_CUSTOM_CONFIGS ({{ check_mode }}) | Processar e Salvar PDBs (usando include)"
+  ansible.builtin.include_tasks: process_pdb_listing.yml # Reutilizando o process_pdb_listing.yml
+  vars:
+    pdbs_resources_to_process: "{{ r_all_cluster_pdbs_in_phase.resources | default([]) }}"
+  when: r_all_cluster_pdbs_in_phase.resources is defined
+
+- name: "CHECK_CUSTOM_CONFIGS ({{ check_mode }}) | Verificar Pods Problemáticos (Informativo)"
+  ansible.builtin.include_tasks: check_problematic_pods_info_only.yml
+  when: aro_cluster_info.cluster_version_obj is defined # Garante que a conexão com o cluster está OK

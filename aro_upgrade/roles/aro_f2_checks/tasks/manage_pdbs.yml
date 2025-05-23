@@ -1,0 +1,80 @@
+# ansible_aro_upgrade_project/roles/aro_f2_upgrade_tasks/tasks/manage_pdbs.yml
+---
+# Ação: pdb_action ("disable" ou "restore")
+
+- name: "PDB_MGMT ({{ pdb_action }}) | Inicializar/Recuperar lista de backup de PDBs originais"
+  ansible.builtin.set_fact:
+    global_original_pdb_specs_backup_list: "{{ global_original_pdb_specs_backup_list | default([]) }}"
+  run_once: true
+
+- name: "PDB_MGMT ({{ pdb_action }}) | Descobrir TODOS os PDBs do cluster para 'disable'"
+  kubernetes.core.k8s_info:
+    api_version: policy/v1
+    kind: PodDisruptionBudget
+    # Sem namespace para obter todos os PDBs cluster-wide
+  register: r_all_pdbs_in_cluster_for_action
+  when: pdb_action == "disable"
+
+# Na ação 'disable', a lista de PDBs a gerenciar são todos os descobertos.
+# Não há mais filtragem por 'business_namespaces_for_pdb_management' ou 'excluded_namespaces_from_pdb_management'.
+- name: "PDB_MGMT ({{ pdb_action }}) | Definir lista de PDBs a serem gerenciados (todos os PDBs)"
+  ansible.builtin.set_fact:
+    pdbs_to_be_managed_this_action: "{{ r_all_pdbs_in_cluster_for_action.resources | default([]) }}"
+  when: pdb_action == "disable" and r_all_pdbs_in_cluster_for_action.resources is defined
+
+- name: "PDB_MGMT ({{ pdb_action }}) | Fazer backup da spec original e 'ZERAR' PDBs"
+  vars:
+    pdb_original_spec_var: "{{ item_pdb.spec }}"
+    disable_patch_payload_var: |
+      {% if pdb_original_spec_var.minAvailable is defined %}
+      [{ "op": "replace", "path": "/spec/minAvailable", "value": 0 }]
+      {% elif pdb_original_spec_var.maxUnavailable is defined %}
+      [{ "op": "replace", "path": "/spec/maxUnavailable", "value": "100%" }]
+      {% else %}
+      [] {# PDB inválido ou não tem campos para zerar (raro) #}
+      {% endif %}
+  block:
+    - name: "PDB_MGMT ({{ pdb_action }}) | Armazenar spec original de {{ item_pdb.metadata.namespace }}/{{ item_pdb.metadata.name }}"
+      ansible.builtin.set_fact:
+        global_original_pdb_specs_backup_list: >-
+          {{ global_original_pdb_specs_backup_list +
+             [{
+               'name': item_pdb.metadata.name,
+               'namespace': item_pdb.metadata.namespace,
+               'original_spec': pdb_original_spec_var
+             }]
+          }}
+    - name: "PDB_MGMT ({{ pdb_action }}) | Aplicar patch para 'ZERAR' {{ item_pdb.metadata.namespace }}/{{ item_pdb.metadata.name }}"
+      kubernetes.core.k8s_patch:
+        api_version: policy/v1
+        kind: PodDisruptionBudget
+        name: "{{ item_pdb.metadata.name }}"
+        namespace: "{{ item_pdb.metadata.namespace }}"
+        patch: "{{ disable_patch_payload_var }}"
+      when: disable_patch_payload_var | length > 0
+  # Itera sobre todos os PDBs descobertos no cluster
+  loop: "{{ pdbs_to_be_managed_this_action | default([]) }}"
+  loop_control:
+    loop_var: item_pdb
+    label: "Zerar PDB: {{ item_pdb.metadata.namespace }}/{{ item_pdb.metadata.name }}"
+  when: pdb_action == "disable" and item_pdb.spec is defined
+
+- name: "PDB_MGMT ({{ pdb_action }}) | RESTAURAR PDBs para specs originais"
+  kubernetes.core.k8s:
+    state: present
+    api_version: policy/v1
+    kind: PodDisruptionBudget
+    definition:
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: "{{ item_backup.name }}"
+        namespace: "{{ item_backup.namespace }}"
+        # Idealmente, restaurar labels/annotations originais também, se foram backupeadas.
+        # Aqui focamos na restauração da 'spec'.
+      spec: "{{ item_backup.original_spec }}" # Restaura a spec original completa
+  loop: "{{ global_original_pdb_specs_backup_list | default([]) }}" # Usa a lista de backup
+  loop_control:
+    loop_var: item_backup
+    label: "Restaurar PDB: {{ item_backup.namespace }}/{{ item_backup.name }}"
+  when: pdb_action == "restore"

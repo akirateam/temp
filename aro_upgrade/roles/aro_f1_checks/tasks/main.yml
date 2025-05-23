@@ -1,0 +1,29 @@
+# ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/main.yml
+---
+- name: Criar diretório de artefatos para {{ check_mode }} do cluster {{ current_cluster_identifier }}
+  ansible.builtin.file:
+    path: "{{ artifact_dir }}"
+    state: directory
+    mode: '0755'
+  run_once: true
+
+- name: "COLETA | Coletar Informações Essenciais do Cluster ({{ check_mode }})"
+  ansible.builtin.include_tasks: get_cluster_info.yml
+
+- name: "AVALIAÇÃO | Avaliar Caminho de Upgrade Inicial e Próximos Saltos Lógicos"
+  ansible.builtin.include_tasks: assess_initial_path.yml
+  when:
+    - aro_cluster_info.cluster_version_obj is defined # Garante que a coleta base funcionou
+    - check_mode == "pre_upgrade"
+
+- name: "VERIFICAÇÃO | Verificar Recursos do Cluster ({{ check_mode }})"
+  ansible.builtin.include_tasks: check_resources.yml
+  when: aro_cluster_info.cluster_version_obj is defined
+
+- name: "VERIFICAÇÃO | Listar Configurações de PDBs ({{ check_mode }})"
+  ansible.builtin.include_tasks: check_custom_configs.yml
+  when: aro_cluster_info.cluster_version_obj is defined
+
+- name: "INFORMATIVO | Verificar APIs Depreciadas ({{ check_mode }})"
+  ansible.builtin.include_tasks: check_deprecated_apis_info_only.yml
+  when: check_mode == "pre_upgrade" and aro_cluster_info.cluster_version_obj is defined

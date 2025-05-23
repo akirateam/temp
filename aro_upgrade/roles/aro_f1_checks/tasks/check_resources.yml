@@ -1,0 +1,18 @@
+# ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/check_resources.yml
+---
+- name: "CHECK_RESOURCES ({{ check_mode }}) | Verificar Métricas de Recursos (Exemplo NodeMetrics)"
+  kubernetes.core.k8s_info:
+    kind: NodeMetrics
+    api_version: metrics.k8s.io/v1beta1
+  register: r_node_metrics
+  ignore_errors: yes
+
+- name: "CHECK_RESOURCES ({{ check_mode }}) | Salvar NodeMetrics (se disponíveis)"
+  ansible.builtin.copy:
+    content: "{{ r_node_metrics.resources | default([]) | to_nice_json(indent=2) }}"
+    dest: "{{ artifact_dir }}/nodemetrics_{{ check_mode }}.json"
+  when: r_node_metrics.resources is defined and r_node_metrics.resources | length > 0
+
+- name: "CHECK_RESOURCES ({{ check_mode }}) | Placeholder para verificações de CPU/Memória/Disco"
+  ansible.builtin.debug:
+    msg: "Implementar verificações de recursos para {{ current_cluster_identifier }} no modo {{ check_mode }}."

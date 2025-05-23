@@ -1,0 +1,67 @@
+# ansible_aro_upgrade_project/playbooks/fase_3_post_checks.yml
+---
+- name: Fase 3 - Verificação Pós-Upgrade (ou Pós-Salto) para Cluster ARO
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars:
+    # Estas variáveis são esperadas como entrada
+    aro_cluster_identifier: "{{ aro_cluster_identifier_from_input | default('unset_cluster_identifier') }}"
+    expected_cluster_version_after_hop: "{{ expected_version_from_input | default('') }}"
+    # Se usando autenticação user/pass, adicione as vars aqui e a task de auth
+
+  pre_tasks:
+    - name: Validar entradas para Fase 3
+      ansible.builtin.fail: # ... (como antes)
+    # Adicionar task de autenticação user/pass aqui se necessário, similar à Fase 1
+    - name: Exibir informações da execução da Fase 3
+      ansible.builtin.debug: # ... (como antes)
+
+  roles:
+    - role: aro_f1_checks # Reutilizando a role de checks
+      vars:
+        current_cluster_identifier: "{{ aro_cluster_identifier }}"
+        check_mode: "post_upgrade_hop_{{ expected_cluster_version_after_hop | regex_replace('[^a-zA-Z0-9_.-]', '_') }}" # Nome de diretório seguro
+        # _openshift_auth_results: "{{ openshift_auth_results | default(omit) }}" # Se usando auth user/pass
+
+  post_tasks:
+    - name: Validar Versão do Cluster Pós-Upgrade
+      ansible.builtin.assert:
+        that:
+          - aro_cluster_info.current_version is defined
+          - aro_cluster_info.current_version == expected_cluster_version_after_hop
+        fail_msg: "FALHA NA VALIDAÇÃO DA VERSÃO! Esperado: {{ expected_cluster_version_after_hop }}, Encontrado: {{ aro_cluster_info.current_version | default('NÃO ENCONTRADO') }}."
+        success_msg: "SUCESSO: Cluster {{ aro_cluster_identifier }} está na versão esperada {{ expected_cluster_version_after_hop }}."
+      when: aro_cluster_info is defined
+
+    - name: Validar Saúde Geral do Cluster Pós-Upgrade
+      ansible.builtin.assert:
+        that:
+          - cv_condition_available | default(false)
+          - not (cv_condition_progressing | default(true))
+          - not (cv_condition_degraded | default(true))
+          - aro_co_status.all_available | default(false)
+          - (aro_co_degraded_count | default(1) | int) == 0
+          - (aro_node_status.ready_count | int) == (aro_node_status.total | int)
+          - aro_mcp_status.all_updated | default(false)
+          - (aro_mcp_status.degraded_mcps | length | int) == 0
+        fail_msg: "FALHA NA VALIDAÇÃO DE SAÚDE PÓS-UPGRADE para {{ aro_cluster_identifier }}! Detalhes: {{ aro_cluster_health_summary }}"
+        success_msg: "SUCESSO: Cluster {{ aro_cluster_identifier }} está saudável após o upgrade para {{ expected_cluster_version_after_hop }}."
+      when: aro_cluster_info is defined and aro_co_status is defined and aro_node_status is defined and aro_mcp_status is defined
+
+    # A task check_custom_configs (dentro da role aro_f1_checks) já terá listado os PDBs.
+    # Você pode adicionar um assert específico aqui para garantir que PDBs de sistema
+    # não estão mais "zerados", comparando com uma lista de PDBs críticos e seus estados esperados.
+    # Exemplo:
+    # - name: Validar se PDBs críticos foram restaurados
+    #   ansible.builtin.include_tasks: validate_critical_pdbs_restored.yml # Task customizada
+
+    - name: Sumário Final da Fase 3
+      ansible.builtin.debug:
+        msg:
+          - "Cluster: {{ aro_cluster_identifier }}"
+          - "Pós-Checks para versão {{ expected_cluster_version_after_hop }} concluídos."
+          - "Saúde Geral do Cluster (Pós-Check): {{ aro_cluster_health_summary | default('Não avaliado') }}"
+          - "Artefatos salvos em: {{ local_artifact_base_path }}/{{ aro_cluster_identifier }}/post_upgrade_hop_{{ expected_cluster_version_after_hop | regex_replace('[^a-zA-Z0-9_.-]', '_') }}"
+      when: aro_cluster_info is defined

@@ -1,0 +1,82 @@
+# ansible_aro_upgrade_project/playbooks/fase_1_pre_checks.yml
+---
+- name: Fase 1 - Preparação, Análise de Caminho e Pré-Checks para Cluster ARO
+  hosts: localhost
+  gather_facts: false
+  connection: local
+
+  vars:
+    aro_cluster_identifier: "{{ aro_cluster_identifier_from_survey | default('unset_cluster_identifier') }}"
+
+  pre_tasks:
+    - name: Validar se aro_cluster_identifier foi fornecido
+      ansible.builtin.fail:
+        msg: "A variável 'aro_cluster_identifier' é obrigatória."
+      when: aro_cluster_identifier == 'unset_cluster_identifier'
+
+    - name: Exibir informações da execução da Fase 1
+      ansible.builtin.debug:
+        msg:
+          - "Iniciando Fase 1 para o Cluster: {{ aro_cluster_identifier }}"
+          - "Diretório base para artefatos: {{ local_artifact_base_path }}"
+          - "Versão EUS Alvo Final: {{ target_final_eus_major_minor }}"
+
+  roles:
+    - role: aro_f1_checks
+      vars:
+        current_cluster_identifier: "{{ aro_cluster_identifier }}"
+        check_mode: "pre_upgrade"
+
+  post_tasks:
+    - name: Sumário Final da Fase 1 e Próximos Passos Sugeridos
+      ansible.builtin.debug:
+        msg:
+          - "Cluster: {{ aro_cluster_identifier }}"
+          - "Saúde Geral do Cluster (Pré-Check): {{ aro_cluster_health_summary | default('Não avaliado devido a erro anterior na coleta de fatos.') }}"
+          - "Próximo Salto de Upgrade Avaliado:"
+          - "  Versão Recomendada: {{ (aro_initial_path_assessment.chosen_next_hop_details.version | default('Nenhum salto imediato recomendado ou já no alvo.')) }}"
+          - "  Imagem: {{ (aro_initial_path_assessment.chosen_next_hop_details.image | default('N/A')) }}"
+          - "  Canal: {{ (aro_initial_path_assessment.chosen_next_hop_details.channel | default(aro_cluster_info.current_channel | default('N/A'))) }}"
+          - "  Acknowledgements Requeridos: {{ aro_initial_path_assessment.required_acknowledgements | default([]) }}"
+          - "APIs Depreciadas com 'removedInRelease': {{ deprecated_apis_info_list | default([]) }}"
+          - "--------------------------------------------------"
+          - "Ações da Fase 1 Concluídas."
+          - "Artefatos salvos em: {{ local_artifact_base_path }}/{{ aro_cluster_identifier }}/fase_1/"
+      when: aro_cluster_info is defined and aro_initial_path_assessment is defined
+
+    - name: "ASSERT PRE-CHECKS | Verificar se o cluster está saudável para o upgrade"
+      ansible.builtin.assert:
+        that:
+          - cv_condition_available | default(false)
+          - not (cv_condition_progressing | default(true))
+          - not (cv_condition_degraded | default(true))
+          - aro_co_status.all_available | default(false)
+          - (aro_co_degraded_count | default(1) | int) == 0
+          - (aro_node_status.ready_count | default(0) | int) == (aro_node_status.total | default(1) | int) # Evitar divisão por zero ou comparação com None
+          - aro_mcp_status.all_updated | default(false)
+          - (aro_mcp_status.degraded_mcps | default([]) | length | int) == 0
+          - aro_initial_path_assessment.chosen_next_hop_details.version is defined and aro_initial_path_assessment.chosen_next_hop_details.version != ""
+        fail_msg: "FALHA NOS PRE-CHECKS! O cluster {{ aro_cluster_identifier }} não está saudável ou um próximo salto válido não foi encontrado. Detalhes da saúde: {{ aro_cluster_health_summary | default('Erro na coleta de saúde') }}. Próximo Salto: {{ aro_initial_path_assessment.chosen_next_hop_details.version | default('N/A') }}"
+        success_msg: "SUCESSO NOS PRE-CHECKS: Cluster {{ aro_cluster_identifier }} está saudável e pronto para o próximo salto."
+      when: >
+        aro_cluster_info is defined and
+        cv_condition_available is defined and cv_condition_progressing is defined and cv_condition_degraded is defined and
+        aro_co_status is defined and aro_co_status.all_available is defined and aro_co_degraded_count is defined and
+        aro_node_status is defined and aro_node_status.ready_count is defined and aro_node_status.total is defined and
+        aro_mcp_status is defined and aro_mcp_status.all_updated is defined and aro_mcp_status.degraded_mcps is defined and
+        aro_initial_path_assessment is defined and aro_initial_path_assessment.chosen_next_hop_details is defined
+
+    - name: Set AAP Job Facts para Fase 2
+      ansible.builtin.set_stats:
+        data:
+          aro_cluster_identifier_output: "{{ aro_cluster_identifier | string }}"
+          current_cluster_channel_output: "{{ aro_cluster_info.current_channel | default('') | string }}"
+          next_hop_version_output: "{{ aro_initial_path_assessment.chosen_next_hop_details.version | default('') | string }}"
+          next_hop_image_output: "{{ aro_initial_path_assessment.chosen_next_hop_details.image | default('') | string }}"
+          next_hop_channel_output: "{{ aro_initial_path_assessment.chosen_next_hop_details.channel | default(aro_cluster_info.current_channel | default('')) | string }}"
+          required_acks_for_hop_output: "{{ aro_initial_path_assessment.required_acknowledgements | default([]) }}" # Lista de strings já é OK
+      when: >
+        aro_initial_path_assessment is defined and
+        aro_initial_path_assessment.chosen_next_hop_details is defined and
+        aro_initial_path_assessment.chosen_next_hop_details.version is defined and
+        aro_initial_path_assessment.chosen_next_hop_details.version != ""

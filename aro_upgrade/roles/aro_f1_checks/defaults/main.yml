@@ -1,0 +1,1 @@
+f1_artifact_dir: "{{ local_artifact_base_path }}/{{ current_cluster_identifier }}/{{ check_mode | default('pre_upgrade') }}"

@@ -1,0 +1,149 @@
+# ansible_aro_upgrade_project/roles/aro_f2_upgrade_tasks/tasks/trigger_and_monitor_upgrade.yml
+---
+# Vars Globais Esperadas do Playbook: target_hop_version, target_hop_image, target_hop_channel, current_cluster_channel_fact
+
+- name: "UPGRADE_PREP | Identificar MCPs"
+  kubernetes.core.k8s_info:
+    kind: MachineConfigPool
+    api_version: machineconfiguration.openshift.io/v1
+  register: r_all_mcps_for_upgrade_phase
+
+- name: "UPGRADE_PREP | Filtrar MCPs master, worker e infra e armazenar nomes"
+  ansible.builtin.set_fact:
+    master_mcp_names: >-
+      {{ r_all_mcps_for_upgrade_phase.resources | default([]) |
+         selectattr('metadata.name', 'equalto', 'master') |
+         map(attribute='metadata.name') | list }}
+    worker_infra_mcp_names: >-
+      {{ r_all_mcps_for_upgrade_phase.resources | default([]) |
+         map(attribute='metadata.name') |
+         reject('equalto', 'master') | list }}
+  when: r_all_mcps_for_upgrade_phase.resources is defined
+
+- name: "UPGRADE_PREP | PAUSAR MCPs de Worker e Infra (EUS)"
+  kubernetes.core.k8s_patch:
+    kind: MachineConfigPool
+    name: "{{ item_mcp_name }}"
+    api_version: machineconfiguration.openshift.io/v1
+    patch:
+      - op: add
+        path: /spec/paused
+        value: true
+  loop: "{{ worker_infra_mcp_names | default([]) }}"
+  loop_control:
+    loop_var: item_mcp_name
+    label: "Pausando MCP {{ item_mcp_name }}"
+  # Condição implícita: esta role/playbook só é chamada para um salto EUS que precise disso.
+  # Ou adicionar: when: target_hop_channel is search('eus')
+
+- name: "UPGRADE_TRIGGER | Definir Canal de Upgrade (se necessário)"
+  kubernetes.core.k8s_patch:
+    kind: ClusterVersion
+    name: version
+    api_version: config.openshift.io/v1
+    patch:
+      - op: replace
+        path: /spec/channel
+        value: "{{ target_hop_channel }}"
+  when: current_cluster_channel_fact != target_hop_channel
+
+- name: "UPGRADE_TRIGGER | Iniciar Upgrade para {{ target_hop_version }}"
+  kubernetes.core.k8s_patch:
+    kind: ClusterVersion
+    name: version
+    api_version: config.openshift.io/v1
+    patch:
+      - op: replace # Usar 'replace' para garantir
+        path: /spec/desiredUpdate # Limpa qualquer desiredUpdate anterior se existir
+        value:
+          force: false # Opcional, geralmente não necessário para upgrades normais
+          version: "{{ target_hop_version }}"
+          image: "{{ target_hop_image }}"
+
+- name: "UPGRADE_MONITOR | Pausa breve para CVO iniciar o processo"
+  ansible.builtin.pause:
+    seconds: 90
+    prompt: "Aguardando CVO iniciar o upgrade para {{ target_hop_version }}. Próximo passo: monitorar Masters."
+
+- name: "UPGRADE_MONITOR | Monitorar atualização dos MASTERS até {{ target_hop_version }}"
+  # Placeholder para loop robusto. O k8s_info com wait pode ser um componente.
+  # Precisa verificar se o MCP master está Updated=True, Degraded=False, e se
+  # updatedMachineCount == machineCount para a config ligada a target_hop_version.
+  # E se o ClusterVersion indica que o plano de controle está estável nessa versão.
+  kubernetes.core.k8s_info: # Exemplo simplificado de espera pelo MCP master
+    api_version: machineconfiguration.openshift.io/v1
+    kind: MachineConfigPool
+    name: "master"
+    wait: yes
+    wait_condition:
+      type: Updated # Ou uma combinação de 'Updated' e 'Degraded=False' e 'Updating=False'
+      status: "True" # E que a currentConfig seja a esperada para a nova versão
+    wait_timeout: 7200 # Ex: 2 horas
+    wait_sleep: 60
+  register: master_mcp_final_status_check
+  # A condição de falha real aqui seria mais complexa, verificando o conteúdo de master_mcp_final_status_check
+
+- name: "UPGRADE_MONITOR | (Simulado) Definir fato se Masters foram atualizados"
+  ansible.builtin.set_fact: # Esta lógica precisa ser REAL, baseada no status do master_mcp_final_status_check
+    masters_successfully_updated_to_hop_target: "{{ not master_mcp_final_status_check.failed | default(false) }}" # Simplificação
+
+- name: "UPGRADE_POST_MASTER | DESPAUSAR MCPs de Worker e Infra APÓS masters atualizados"
+  kubernetes.core.k8s_patch:
+    kind: MachineConfigPool
+    name: "{{ item_mcp_name }}"
+    api_version: machineconfiguration.openshift.io/v1
+    patch:
+      - op: replace # ou remove se o default é 'paused' não existir ou ser false
+        path: /spec/paused
+        value: false
+  loop: "{{ worker_infra_mcp_names | default([]) }}"
+  loop_control:
+    loop_var: item_mcp_name
+    label: "Despausando MCP {{ item_mcp_name }}"
+  when: masters_successfully_updated_to_hop_target | default(false)
+
+- name: "UPGRADE_MONITOR | Pausa breve para MCPs worker/infra iniciarem atualização"
+  ansible.builtin.pause:
+    seconds: 60
+  when: masters_successfully_updated_to_hop_target | default(false)
+
+- name: "UPGRADE_MONITOR | Aguarda o upgrade COMPLETO do ClusterVersion finalizar"
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterVersion
+    name: version
+    wait: yes
+    wait_condition:
+      - type: "Progressing"
+        status: "False"
+        reason: "UpgradeFinished" # Ou similar, verificar razões válidas
+      - type: "Available"
+        status: "True"
+      - type: "Failing"
+        status: "False"
+    wait_sleep: 60
+    wait_timeout: 14400 # Ex: 4 horas para workers e operadores finalizarem
+  register: r_cv_final_hop
+  when: masters_successfully_updated_to_hop_target | default(false)
+
+# Adicionar verificação final de todos os MCPs (workers/infra)
+- name: "UPGRADE_MONITOR | Verificar se todos MCPs (worker/infra) estão atualizados para config do {{ target_hop_version }}"
+  kubernetes.core.k8s_info:
+    api_version: machineconfiguration.openshift.io/v1
+    kind: MachineConfigPool
+    name: "{{ item_mcp_check }}"
+    # Adicionar wait_condition mais específica para garantir que está na config certa e Updated=True
+  loop: "{{ worker_infra_mcp_names | default([]) }}"
+  register: r_worker_infra_mcps_final_check
+  # ... (lógica para determinar se all_worker_infra_mcps_updated com base no resultado) ...
+  when: masters_successfully_updated_to_hop_target | default(false)
+
+
+- name: "UPGRADE_MONITOR | Definir status final do salto (interno à role)"
+  ansible.builtin.set_fact:
+    # Esta lógica precisa ser robusta baseada nos resultados de r_cv_final_hop e r_worker_infra_mcps_final_check
+    upgrade_hop_successful_internal: >-
+      {{ masters_successfully_updated_to_hop_target | default(false) and
+         r_cv_final_hop.resources[0].status.desired.version == target_hop_version and
+         # Adicionar checagem de r_worker_infra_mcps_final_check
+         not r_cv_final_hop.failed | default(true) }} # Simplificação
