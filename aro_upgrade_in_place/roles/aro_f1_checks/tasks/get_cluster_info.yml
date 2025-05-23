@@ -67,7 +67,6 @@
     kind: Node
   register: r_nodes
 
-# --- INÍCIO DA SEÇÃO CORRIGIDA PARA PROCESSAR NÓS ---
 - name: GET_CLUSTER_INFO | Inicializar contadores/listas para status dos Nós
   ansible.builtin.set_fact:
     _temp_nodes_ready_count: 0
@@ -96,7 +95,6 @@
       total: "{{ r_nodes.resources | length }}"
       ready_count: "{{ _temp_nodes_ready_count }}"
       not_ready_list: "{{ _temp_nodes_not_ready_list }}"
-# --- FIM DA SEÇÃO CORRIGIDA PARA PROCESSAR NÓS ---
 
 - name: GET_CLUSTER_INFO | Obter status dos MachineConfigPools (MCPs)
   kubernetes.core.k8s_info:
@@ -104,7 +102,6 @@
     api_version: machineconfiguration.openshift.io/v1
   register: r_mcps
 
-# --- INÍCIO DA SEÇÃO CORRIGIDA PARA PROCESSAR MCPS ---
 - name: GET_CLUSTER_INFO | Inicializar status para MCPs
   ansible.builtin.set_fact:
     _temp_mcp_all_updated_flag: true # Assumir que todos estão atualizados inicialmente
@@ -112,7 +109,6 @@
 
 - name: GET_CLUSTER_INFO | Iterar sobre MCPs para verificar status
   ansible.builtin.set_fact:
-    # Se qualquer MCP não estiver atualizado, a flag _temp_mcp_all_updated_flag se torna false
     _temp_mcp_all_updated_flag: >-
       {{ _temp_mcp_all_updated_flag
          if (item.status.updatedMachineCount | int == item.status.machineCount | int )
@@ -126,8 +122,10 @@
     label: "{{ item.metadata.name }}"
   when:
     - item.status is defined
-    - item.status.updatedMachineCount is defined # Garante que os atributos existem para a comparação
+    - item.status.updatedMachineCount is defined
     - item.status.machineCount is defined
+    # A condição para _temp_mcp_all_updated_flag já trata o update,
+    # aqui o when é mais para garantir que os dados existem para a checagem de degradado.
 
 - name: GET_CLUSTER_INFO | Definir fatos finais do status dos MCPs
   ansible.builtin.set_fact:
@@ -135,7 +133,6 @@
       all_updated: "{{ _temp_mcp_all_updated_flag }}"
       degraded_mcps: "{{ _temp_mcp_degraded_list }}"
       mcp_details: "{{ r_mcps.resources | items2dict(key_name='metadata.name', value_name='status') }}"
-# --- FIM DA SEÇÃO CORRIGIDA PARA PROCESSAR MCPS ---
 
 - name: GET_CLUSTER_INFO | Sumarizar saúde geral do cluster para display e validação rápida
   ansible.builtin.set_fact:
@@ -156,5 +153,5 @@
         "nodes": {{ r_nodes.resources | default([]) | to_nice_json(indent=2) }},
         "mcps": {{ r_mcps.resources | default([]) | to_nice_json(indent=2) }}
       }
-    dest: "{{ f1_artifact_dir }}/cluster_objects_pre_upgrade.json" # f1_artifact_dir vem de defaults/main.yml da role
+    dest: "{{ f1_artifact_dir }}/cluster_objects_pre_upgrade.json"
   when: aro_cluster_info is defined
