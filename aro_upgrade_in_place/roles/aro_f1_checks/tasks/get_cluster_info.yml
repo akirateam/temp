@@ -73,18 +73,36 @@
     _temp_nodes_not_ready_list: []
 
 - name: GET_CLUSTER_INFO | Iterar sobre Nós para verificar condição 'Ready'
-  ansible.builtin.set_fact:
-    _temp_nodes_ready_count: >-
-      {{ _temp_nodes_ready_count + 1
-         if (item.status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0)
-         else _temp_nodes_ready_count }}
-    _temp_nodes_not_ready_list: >-
-      {{ _temp_nodes_not_ready_list + [item.metadata.name]
-         if not (item.status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0)
-         else _temp_nodes_not_ready_list }}
+  vars:
+    # Define a condição de "nó pronto" em uma variável para clareza
+    node_is_actually_ready: >-
+      {{ (item.status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0) }}
+  block:
+    # Task de DEBUG - remova ou comente após o troubleshooting
+    - name: DEBUG | Antes de atualizar contadores/listas de Nós
+      ansible.builtin.debug:
+        msg:
+          - "Processando Nó: {{ item.metadata.name }}"
+          - "Condição 'node_is_actually_ready': {{ node_is_actually_ready }}"
+          - "Valor ATUAL de _temp_nodes_ready_count: {{ _temp_nodes_ready_count }}"
+          - "Tipo ATUAL de _temp_nodes_ready_count: {{ _temp_nodes_ready_count | type_debug }}"
+          - "Valor ATUAL de _temp_nodes_not_ready_list: {{ _temp_nodes_not_ready_list }}"
+      when: ansible_verbosity > 1 # Mostra apenas com -vv ou mais
+
+    - name: Atualizar contadores e listas de Nós
+      ansible.builtin.set_fact:
+        _temp_nodes_ready_count: >-
+          {{ (_temp_nodes_ready_count | int) + 1  # Força para inteiro ANTES de somar
+             if node_is_actually_ready
+             else (_temp_nodes_ready_count | int) }} # Garante que o tipo se mantenha inteiro
+        _temp_nodes_not_ready_list: >-
+          {{ _temp_nodes_not_ready_list + [item.metadata.name ~ ''] # Garante que o nome do nó é string
+             if not node_is_actually_ready
+             else _temp_nodes_not_ready_list }}
   loop: "{{ r_nodes.resources }}"
   loop_control:
     label: "{{ item.metadata.name }}"
+    loop_var: item # Boa prática definir explicitamente a variável do loop
   when:
     - item.status is defined
     - item.status.conditions is defined
