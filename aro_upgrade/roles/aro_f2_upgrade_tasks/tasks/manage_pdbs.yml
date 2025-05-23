@@ -36,7 +36,7 @@
       {% elif pdb_original_spec_var.maxUnavailable is defined %}
       [{ "op": "replace", "path": "/spec/maxUnavailable", "value": "100%" }]
       {% else %}
-      []
+      [] {# PDB sem minAvailable ou maxUnavailable - não deveria acontecer para PDB válido #}
       {% endif %}
   block:
     - name: "PDB_MGMT ({{ pdb_action }}) | Armazenar definição original de {{ pdb_current_item.metadata.namespace }}/{{ pdb_current_item.metadata.name }}"
@@ -46,19 +46,19 @@
       # Só adiciona ao backup se ainda não estiver lá (para idempotência se rodar de novo)
       when: not (global_original_pdb_definitions_backup | selectattr('metadata.name', 'equalto', pdb_current_item.metadata.name) | selectattr('metadata.namespace', 'equalto', pdb_current_item.metadata.namespace) | list)
 
-    - name: "PDB_MGMT ({{ pdb_action }}) | Salvar YAML original de {{ pdb_current_item.metadata.namespace }}/{{ pdb_current_item.metadata.name }} em artefatos"
+    - name: "PDB_MGMT ({{ pdb_action }}) | Salvar YAML original de {{ pdb_current_item.metadata.namespace }}/{{ pdb_current_item.metadata.name }} em artefatos" #
       ansible.builtin.copy:
-        content: "{{ pdb_full_definition_backup_var | to_nice_yaml(indent=2) }}"
+        content: "{{ pdb_full_definition_backup_var | to_nice_yaml(indent=2) }}" #
         dest: "{{ _f2_artifact_dir_role }}/pdb_backup_{{ pdb_current_item.metadata.namespace | regex_replace('[^a-zA-Z0-9_]', '_') }}_{{ pdb_current_item.metadata.name | regex_replace('[^a-zA-Z0-9_]', '_') }}.yaml"
       check_mode: no # Salvar o backup mesmo em check_mode
       when: pdb_full_definition_backup_var is defined
 
-    - name: "PDB_MGMT ({{ pdb_action }}) | Aplicar patch para 'ZERAR' {{ pdb_current_item.metadata.namespace }}/{{ pdb_current_item.metadata.name }}"
+    - name: "PDB_MGMT ({{ pdb_action }}) | Aplicar patch para 'ZERAR' {{ pdb_current_item.metadata.namespace }}/{{ pdb_current_item.metadata.name }}" #
       kubernetes.core.k8s_patch:
-        api_version: policy/v1
-        kind: PodDisruptionBudget
-        name: "{{ pdb_current_item.metadata.name }}"
-        namespace: "{{ pdb_current_item.metadata.namespace }}"
+        api_version: policy/v1 #
+        kind: PodDisruptionBudget #
+        name: "{{ pdb_current_item.metadata.name }}" #
+        namespace: "{{ pdb_current_item.metadata.namespace }}" #
         patch: "{{ disable_patch_payload_var }}"
         host: "{{ k8s_auth_params.host | default(omit) }}"
         api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
@@ -69,17 +69,18 @@
 
   loop: "{{ pdbs_to_be_managed_this_action | default([]) }}"
   loop_control:
-    loop_var: item_pdb_to_manage # Renomeado para evitar conflito com 'item' de outro loop possível
+    loop_var: item_pdb_to_manage
     label: "Disable PDB: {{ item_pdb_to_manage.metadata.namespace }}/{{ item_pdb_to_manage.metadata.name }}"
   when: pdb_action == "disable"
 
-- name: "PDB_MGMT ({{ pdb_action }}) | RESTAURAR PDBs a partir das definições originais"
-  kubernetes.core.k8s:
-    state: present
-    definition: "{{ item_backup_pdb.original_full_definition }}" # Usa a definição completa salva
-    host: "{{ k8s_auth_params.host | default(omit) }}"
-    api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
-    validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}"
+- name: "PDB_MGMT ({{ pdb_action }}) | RESTAURAR PDBs a partir das definições originais" #
+  kubernetes.core.k8s: #
+    state: present #
+    # Usamos a definição completa que foi salva no backup
+    definition: "{{ item_backup_pdb.original_full_definition }}" #
+    host: "{{ k8s_auth_params.host | default(omit) }}" #
+    api_key: "{{ k8s_auth_params.api_key | default(omit) }}" #
+    validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}" #
     force: true # Para forçar a substituição se a spec mudou para o estado "zerado"
   loop: "{{ global_original_pdb_definitions_backup | default([]) }}"
   loop_control:
@@ -93,4 +94,3 @@
   ansible.builtin.set_fact:
     global_original_pdb_definitions_backup: []
   when: pdb_action == "restore" and not (r_pdb_restore.results | default([]) | selectattr('failed', 'defined') | selectattr('failed', 'equalto', true) | list)
-  # Só limpa se todas as restaurações foram bem-sucedidas

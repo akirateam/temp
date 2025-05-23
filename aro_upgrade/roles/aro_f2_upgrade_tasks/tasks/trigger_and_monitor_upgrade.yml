@@ -8,18 +8,21 @@
   kubernetes.core.k8s_info:
     kind: MachineConfigPool
     api_version: machineconfiguration.openshift.io/v1
+    host: "{{ k8s_auth_params.host | default(omit) }}"
+    api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
+    validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}"
   register: r_all_mcps_for_upgrade_phase
   retries: 3
   delay: 10
 
 - name: "UPGRADE_PREP | Filtrar nomes de MCPs master e worker/infra"
   ansible.builtin.set_fact:
-    _master_mcp_name_list_fact: >- #
+    _master_mcp_name_list_fact: >-
       {{ r_all_mcps_for_upgrade_phase.resources | default([]) |
          selectattr('metadata.name', 'defined') |
          selectattr('metadata.name', 'equalto', 'master') |
          map(attribute='metadata.name') | list }}
-    _worker_infra_mcp_name_list_fact: >- #
+    _worker_infra_mcp_name_list_fact: >-
       {{ r_all_mcps_for_upgrade_phase.resources | default([]) |
          selectattr('metadata.name', 'defined') |
          map(attribute='metadata.name') |
@@ -33,32 +36,31 @@
 
 - name: "UPGRADE_PREP | PAUSAR MCPs de Worker e Infra (lógica EUS)" #
   kubernetes.core.k8s_patch:
-    kind: MachineConfigPool #
-    name: "{{ item_mcp_name }}" #
-    api_version: machineconfiguration.openshift.io/v1 #
+    kind: MachineConfigPool
+    name: "{{ item_mcp_name }}"
+    api_version: machineconfiguration.openshift.io/v1
     patch:
       - op: add # Adiciona se não existir, substitui se existir
-        path: /spec/paused #
-        value: true #
-  loop: "{{ _worker_infra_mcp_name_list_fact | default([]) }}" #
+        path: /spec/paused
+        value: true
+    host: "{{ k8s_auth_params.host | default(omit) }}"
+    api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
+    validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}"
+  loop: "{{ _worker_infra_mcp_name_list_fact | default([]) }}"
   loop_control:
     loop_var: item_mcp_name
     label: "Pausando MCP {{ item_mcp_name }}"
-  # Condição para ser EUS deve ser tratada no workflow que chama este playbook,
-  # ou passada como uma var '_is_eus_hop: true' para esta role.
-  # Exemplo: when: _is_eus_hop | default(false) | bool
-  # Seus scripts verificam `update_channel.startswith('eus')` que pode ser usado aqui.
-  when: _target_hop_channel_role is defined and (_target_hop_channel_role | string | lower is search('eus'))
+  when: _target_hop_channel_role is defined and (_target_hop_channel_role | string | lower is search('eus')) #
 
-- name: "UPGRADE_TRIGGER | Definir Canal de Upgrade (se necessário)" #
+- name: "UPGRADE_TRIGGER | Definir Canal de Upgrade (se necessário)"
   kubernetes.core.k8s_patch:
-    kind: ClusterVersion #
-    name: version #
-    api_version: config.openshift.io/v1 #
+    kind: ClusterVersion
+    name: version
+    api_version: config.openshift.io/v1
     patch:
       - op: replace
-        path: /spec/channel #
-        value: "{{ _target_hop_channel_role }}" #
+        path: /spec/channel
+        value: "{{ _target_hop_channel_role }}"
     host: "{{ k8s_auth_params.host | default(omit) }}"
     api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
     validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}"
@@ -75,6 +77,9 @@
         value:
           version: "{{ _target_hop_version_role }}"
           image: "{{ _target_hop_image_role }}"
+    host: "{{ k8s_auth_params.host | default(omit) }}"
+    api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
+    validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}"
 
 - name: "UPGRADE_MONITOR | Pausa breve para CVO iniciar o processo"
   ansible.builtin.pause:
@@ -96,8 +101,11 @@
         status: "False"
     wait_timeout: 7200 # 2 horas
     wait_sleep: 60
+    host: "{{ k8s_auth_params.host | default(omit) }}"
+    api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
+    validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}"
   register: r_master_mcp_wait_status
-  failed_when: > # Condição de falha robusta
+  failed_when: >
     not r_master_mcp_wait_status.resources or
     r_master_mcp_wait_status.resources | length == 0 or
     not (r_master_mcp_wait_status.resources[0].status.conditions | selectattr('type', 'equalto', 'Updated') | selectattr('status', 'equalto', 'True') | list) or
@@ -118,11 +126,15 @@
       - op: replace #
         path: /spec/paused #
         value: false #
+    host: "{{ k8s_auth_params.host | default(omit) }}" #
+    api_key: "{{ k8s_auth_params.api_key | default(omit) }}" #
+    validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}" #
   loop: "{{ _worker_infra_mcp_name_list_fact | default([]) }}" #
   loop_control:
     loop_var: item_mcp_name
     label: "Despausando MCP {{ item_mcp_name }}"
-  when: masters_successfully_updated_fact | default(false) #
+  when: masters_successfully_updated_fact | default(false) and (_target_hop_channel_role is defined and (_target_hop_channel_role | string | lower is search('eus'))) #
+
 
 - name: "UPGRADE_MONITOR | Pausa breve para MCPs worker/infra iniciarem atualização"
   ansible.builtin.pause:
@@ -145,7 +157,10 @@
       - type: "Degraded"
         status: "False"
     wait_sleep: 60 #
-    wait_timeout: 18000 # 5 horas (ajuste conforme necessário)
+    wait_timeout: 18000 # 5 horas
+    host: "{{ k8s_auth_params.host | default(omit) }}" #
+    api_key: "{{ k8s_auth_params.api_key | default(omit) }}" #
+    validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}" #
   register: r_cv_final_hop_status #
   when: masters_successfully_updated_fact | default(false)
 
@@ -172,8 +187,11 @@
         status: "False"
       - type: Degraded
         status: "False"
-    wait_timeout: 7200 # 2 horas por grupo (worker/infra)
+    wait_timeout: 10800 # 3 horas por grupo de MCPs worker/infra
     wait_sleep: 30
+    host: "{{ k8s_auth_params.host | default(omit) }}"
+    api_key: "{{ k8s_auth_params.api_key | default(omit) }}"
+    validate_certs: "{{ k8s_auth_params.validate_certs | default(omit) }}"
   loop: "{{ _worker_infra_mcp_name_list_fact | default([]) }}"
   loop_control:
     loop_var: item_mcp_check_final
@@ -207,6 +225,6 @@
              r_cv_final_hop_status.resources[0].status is defined and r_cv_final_hop_status.resources[0].status.desired is defined
           else false) and
          (all_worker_infra_mcps_final_updated_successfully | default(false)
-          if (_worker_infra_mcp_name_list_fact | default([]) | length > 0) # Só checa workers se eles existem
-          else true) # Se não há workers/infra para checar, considera sucesso nesta parte
+          if (_worker_infra_mcp_name_list_fact | default([]) | length > 0)
+          else true)
       }}
