@@ -1,44 +1,38 @@
+# ansible_aro_upgrade_project/roles/aro_f1_checks/tasks/assess_initial_path.yml
 ---
-# Analisa as atualizações disponíveis e sugere próximos passos lógicos.
-
 - name: ASSESS_PATH | Extrair EUS major.minor atual da versão do cluster
   ansible.builtin.set_fact:
     current_eus_major_minor: "{{ aro_cluster_info.current_version.split('.')[0] }}.{{ aro_cluster_info.current_version.split('.')[1] }}"
 
 - name: ASSESS_PATH | Calcular índice EUS atual
   ansible.builtin.set_fact:
-    # Calcula o índice do EUS atual ou -1 se não encontrado. Garante que é um inteiro.
     current_eus_index_fact: >-
       {{ (eus_known_progression.index(current_eus_major_minor)
          if current_eus_major_minor in eus_known_progression else -1) | int }}
 
 - name: ASSESS_PATH | Calcular próximo índice EUS
   ansible.builtin.set_fact:
-    # Adiciona 1 ao índice atual. O resultado será um inteiro.
-    next_eus_index_fact: "{{ current_eus_index_fact + 1 }}"
+    next_eus_index_fact: "{{ current_eus_index_fact + 1 }}" # current_eus_index_fact já é int
 
 - name: ASSESS_PATH | Determinar condição para calcular próximo EUS lógico
   ansible.builtin.set_fact:
-    # Define uma flag booleana para a condição. Ambas as comparações são entre inteiros.
     _can_determine_next_logical_eus: >-
       {{ (current_eus_index_fact != -1) and
-         (next_eus_index_fact < (eus_known_progression | length)) }}
+         (next_eus_index_fact < (eus_known_progression | length | int)) }} # Comparações entre inteiros
 
 - name: ASSESS_PATH | Definir próximo EUS major.minor lógico
   ansible.builtin.set_fact:
-    # Usa a flag e o índice para acessar a lista. O índice é forçado para int por segurança.
     next_logical_eus_major_minor: >-
-      {{ eus_known_progression[(next_eus_index_fact | int)]
+      {{ eus_known_progression[(next_eus_index_fact | int)] # Força int para índice
          if _can_determine_next_logical_eus
          else 'N/A' }}
 
 - name: ASSESS_PATH | Verificar se já estamos no EUS minor alvo ou além
   ansible.builtin.set_fact:
-    assessment_already_at_or_beyond_target_eus: "{{ (current_eus_major_minor >= target_final_eus_major_minor) }}"
+    assessment_already_at_or_beyond_target_eus: "{{ (current_eus_major_minor >= target_final_eus_major_minor) }}" # Comparação de strings aqui é OK para versões X.Y
 
 - name: ASSESS_PATH | Procurar por atualização Z-stream recomendada DENTRO do canal EUS ATUAL
   vars:
-    # Esta expressão complexa permanece, mas é para um propósito diferente (filtragem de dados)
     zstream_update_candidates_in_current_eus: >-
       {{ aro_cluster_info.available_updates |
          selectattr('channel', 'defined') |
