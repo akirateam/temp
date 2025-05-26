@@ -29,21 +29,41 @@
     msg: "Cluster: {{ cluster_name }}. Iniciando processo de upgrade com os seguintes saltos: {{ upgrade_hops }}. Controle Global de MCPs: {{ control_mcps_globally }}"
   when: upgrade_hops is defined and upgrade_hops | length > 0
 
-- name: "PAUSAR MCPs (worker) globalmente em {{ cluster_name }} para a sequência de upgrades"
-  kubernetes.core.k8s_patch:
+- name: "PAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s_json_patch"
+  kubernetes.core.k8s_json_patch:
     kind: MachineConfigPool
     api_version: machineconfiguration.openshift.io/v1
     name: worker
-    definition:
-      spec:
-        paused: true
-    retries: 3
-    delay: 10
+    patch:
+      - op: replace # Tenta substituir. Falhará se /spec/paused não existir.
+        path: /spec/paused
+        value: true
   register: r_mcp_global_pause_status
+  retries: 3
+  delay: 10
   when:
     - upgrade_hops is defined
     - upgrade_hops | length > 0
     - control_mcps_globally
+  ignore_errors: true # Ignorar erro temporariamente para ver se o 'add' funciona
+
+- name: "PAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s_json_patch (tentativa com 'add')"
+  kubernetes.core.k8s_json_patch:
+    kind: MachineConfigPool
+    api_version: machineconfiguration.openshift.io/v1
+    name: worker
+    patch:
+      - op: add # Tenta adicionar. Falhará se /spec/paused já existir.
+        path: /spec/paused
+        value: true
+  register: r_mcp_global_pause_add_status
+  retries: 3
+  delay: 10
+  when:
+    - upgrade_hops is defined
+    - upgrade_hops | length > 0
+    - control_mcps_globally
+    - r_mcp_global_pause_status is defined and r_mcp_global_pause_status.failed # Só tenta 'add' se 'replace' falhou
 
 - name: "Aguardar MCP worker ser efetivamente pausado globalmente em {{ cluster_name }}"
   kubernetes.core.k8s_info:
@@ -58,7 +78,8 @@
     - upgrade_hops is defined
     - upgrade_hops | length > 0
     - control_mcps_globally
-    - r_mcp_global_pause_status is defined and r_mcp_global_pause_status.changed
+    - (r_mcp_global_pause_status is defined and not r_mcp_global_pause_status.failed) or (r_mcp_global_pause_add_status is defined and not r_mcp_global_pause_add_status.failed)
+
 
 - name: Iterar sobre os saltos de upgrade para {{ cluster_name }}
   ansible.builtin.include_tasks: _perform_single_hop.yml
@@ -70,18 +91,21 @@
   when: upgrade_hops is defined and upgrade_hops | length > 0
   register: r_hop_results
 
-- name: "DESPAUSAR MCPs (worker) globalmente em {{ cluster_name }} após todos os upgrades"
-  kubernetes.core.k8s_patch:
+- name: "DESPAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s_json_patch"
+  kubernetes.core.k8s_json_patch:
     kind: MachineConfigPool
     api_version: machineconfiguration.openshift.io/v1
     name: worker
-    definition:
-      spec:
-        paused: false
+    patch:
+      - op: replace # Assume que o campo /spec/paused existe neste ponto
+        path: /spec/paused
+        value: false
   register: r_mcp_global_unpause_status
+  retries: 3
+  delay: 10
   when:
     - upgrade_hops is defined
-    - upgrade_hops | length > 0 # Apenas se houve saltos
+    - upgrade_hops | length > 0
     - control_mcps_globally
 
 - name: "Aguardar MCP worker concluir a atualização APÓS despausar globalmente em {{ cluster_name }}"
