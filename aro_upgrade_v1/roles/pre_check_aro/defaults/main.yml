@@ -1,0 +1,9 @@
+---
+# Valores default para a role pre_check_aro
+target_aro_version: ""
+target_channel_eus: "" # Canal EUS da versão alvo (ex: eus-4.16)
+cluster_name: "aro_cluster_unspecified"
+# initial_cluster_channel é descoberto, não precisa de default aqui
+# calculated_upgrade_hops é calculado, não precisa de default aqui
+# original_pdbs_specs e original_pdbs_metadata são descobertos
+max_hop_discovery_iterations: 15 # Máximo de iterações para busca de saltos

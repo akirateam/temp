@@ -1,0 +1,66 @@
+---
+- name: Validar variáveis de entrada do job anterior (Fase de Upgrade)
+  ansible.builtin.assert:
+    that:
+      - upgrade_hops_stat is defined # Pode ser lista vazia se já no alvo
+      - target_aro_version_stat is defined and target_aro_version_stat | length > 0
+      - target_channel_eus_stat is defined and target_channel_eus_stat | length > 0
+      - cluster_name_stat is defined and cluster_name_stat | length > 0
+      - current_cluster_version_stat is defined and current_cluster_version_stat | length > 0
+      - initial_cluster_channel_stat is defined # Pode ser vazio se não for EUS, mas deve ser definido
+      # original_pdbs_specs_stat e original_pdbs_metadata_stat são opcionais aqui para a lógica de upgrade em si,
+      # mas precisam ser passados para o job de post_check
+    fail_msg: "Variáveis necessárias do job de pré-checagem não foram encontradas para a fase de upgrade."
+    quiet: true
+
+- name: Definir fatos locais a partir de stats do job anterior (Fase de Upgrade)
+  ansible.builtin.set_fact:
+    cluster_name: "{{ cluster_name_stat }}"
+    upgrade_hops: "{{ upgrade_hops_stat }}"
+    target_aro_version: "{{ target_aro_version_stat }}"
+    target_channel_eus: "{{ target_channel_eus_stat }}"
+    # Guardar dados para passar para o próximo job (post_check)
+    _initial_cluster_version_for_summary: "{{ current_cluster_version_stat }}"
+    _initial_cluster_channel_for_summary: "{{ initial_cluster_channel_stat }}"
+    _original_pdbs_specs_passthrough: "{{ original_pdbs_specs_stat | default([]) }}"
+    _original_pdbs_metadata_passthrough: "{{ original_pdbs_metadata_stat | default([]) }}"
+
+- name: "Informar sobre os saltos a serem realizados em {{ cluster_name }}"
+  ansible.builtin.debug:
+    msg: "Cluster: {{ cluster_name }}. Iniciando processo de upgrade com os seguintes saltos: {{ upgrade_hops }}"
+  when: upgrade_hops | length > 0
+
+- name: Iterar sobre os saltos de upgrade para {{ cluster_name }}
+  include_tasks: _perform_single_hop.yml
+  loop: "{{ upgrade_hops }}"
+  loop_control:
+    loop_var: target_hop_version
+  when: upgrade_hops | length > 0 # Só executa se houver saltos planejados
+  register: r_hop_results
+
+- name: "Obter versão final do cluster {{ cluster_name }} após todos os saltos (ou se não houve saltos)"
+  kubernetes.core.k8s_info:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+  register: r_final_cluster_version_info
+  retries: 3
+  delay: 10
+
+- name: Definir final_achieved_version
+  ansible.builtin.set_fact:
+    # Se não houve saltos (upgrade_hops estava vazio), a versão final é a inicial.
+    final_achieved_version: "{{ r_final_cluster_version_info.resources[0].status.desired.version if (r_final_cluster_version_info.resources is defined and r_final_cluster_version_info.resources | length > 0) else current_cluster_version_stat }}"
+
+- name: Expor dados para o próximo Job Template (Post-Check)
+  ansible.builtin.set_stats:
+    data:
+      final_achieved_version_stat: "{{ final_achieved_version }}"
+      target_aro_version_stat: "{{ target_aro_version }}"
+      target_channel_eus_stat: "{{ target_channel_eus }}"
+      cluster_name_stat: "{{ cluster_name }}"
+      initial_cluster_version_stat: "{{ _initial_cluster_version_for_summary }}"
+      initial_cluster_channel_stat: "{{ _initial_cluster_channel_for_summary }}"
+      original_pdbs_specs_stat: "{{ _original_pdbs_specs_passthrough }}"
+      original_pdbs_metadata_stat: "{{ _original_pdbs_metadata_passthrough }}"
+    per_host: false

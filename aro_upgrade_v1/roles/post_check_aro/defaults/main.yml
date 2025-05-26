@@ -1,0 +1,10 @@
+---
+# Estas são as variáveis que esperamos receber via set_stats do job anterior
+final_achieved_version_stat: ""
+target_aro_version_stat: ""
+target_channel_eus_stat: ""
+cluster_name_stat: "aro_cluster_unspecified"
+initial_cluster_version_stat: ""
+initial_cluster_channel_stat: ""
+original_pdbs_specs_stat: []
+original_pdbs_metadata_stat: []

@@ -1,0 +1,60 @@
+---
+# health_check_stage_name é passado como var para este include
+- name: "Health Check: {{ health_check_stage_name }} - Verificar ClusterVersion"
+  kubernetes.core.k8s_info:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+  register: r_cv_health
+  retries: 5
+  delay: 15
+  until: >
+    r_cv_health.resources is defined and
+    r_cv_health.resources | length > 0 and
+    (r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | first).status == 'True' and
+    (r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | first).status == 'False' and
+    (r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | first).status == 'False'
+
+- name: "Health Check: {{ health_check_stage_name }} - Verificar ClusterOperators"
+  kubernetes.core.k8s_info:
+    kind: ClusterOperator
+    api_version: config.openshift.io/v1
+  register: r_co_health
+  retries: 3
+  delay: 10
+
+- name: "Health Check: {{ health_check_stage_name }} - Validar status dos ClusterOperators"
+  ansible.builtin.assert:
+    that:
+      - not item.status.conditions | selectattr('type', 'equalto', 'Available') | selectattr('status', 'equalto', 'False') | list
+      - not item.status.conditions | selectattr('type', 'equalto', 'Progressing') | selectattr('status', 'equalto', 'True') | list
+      - not item.status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | list
+    fail_msg: "ClusterOperator {{ item.metadata.name }} em {{ health_check_stage_name }} não está saudável. Condições: {{ item.status.conditions }}"
+    quiet: true # Para não poluir o log com sucessos
+  loop: "{{ r_co_health.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+
+- name: "Health Check: {{ health_check_stage_name }} - Verificar Nós"
+  kubernetes.core.k8s_info:
+    kind: Node
+    api_version: v1
+  register: r_node_health
+
+- name: "Health Check: {{ health_check_stage_name }} - Validar status dos Nós"
+  ansible.builtin.assert:
+    that:
+      - item.status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list
+    fail_msg: "Nó {{ item.metadata.name }} em {{ health_check_stage_name }} não está Ready. Condições: {{ item.status.conditions }}"
+    quiet: true
+  loop: "{{ r_node_health.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+
+- name: "Health Check: {{ health_check_stage_name }} - Sumário"
+  ansible.builtin.debug:
+    msg:
+      - "Saúde do Cluster ({{ health_check_stage_name }}): OK"
+      - "Versão Desejada Atual: {{ r_cv_health.resources[0].status.desired.version }}"
+      - "ClusterOperators: {{ r_co_health.resources | length }} operadores, todos saudáveis."
+      - "Nós: {{ r_node_health.resources | length }} nós, todos Ready."

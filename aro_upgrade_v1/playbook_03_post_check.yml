@@ -1,0 +1,11 @@
+---
+- name: ARO Upgrade - Fase 3: Pós-Checagem e Finalização
+  hosts: localhost
+  gather_facts: false
+  # As vars como final_achieved_version_stat, etc.,
+  # são injetadas pelo AAP a partir do output do job anterior (set_stats).
+  # Defina defaults aqui para testes locais, se necessário.
+  vars:
+    cluster_name_stat: "aro_cluster_default_postcheck" # Exemplo de default
+  roles:
+    - role: post_check_aro

@@ -1,0 +1,11 @@
+---
+- name: ARO Upgrade - Fase 2: Executar Saltos de Upgrade
+  hosts: localhost
+  gather_facts: false
+  # As vars como cluster_name_stat, upgrade_hops_stat, etc.,
+  # são injetadas pelo AAP a partir do output do job anterior (set_stats).
+  # Defina defaults aqui para testes locais, se necessário.
+  vars:
+    cluster_name_stat: "aro_cluster_default_upgrade" # Exemplo de default
+  roles:
+    - role: upgrade_aro_hops

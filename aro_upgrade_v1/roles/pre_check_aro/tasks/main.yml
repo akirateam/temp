@@ -1,0 +1,33 @@
+---
+- name: Validar Variáveis de Entrada
+  include_tasks: 00_validate_vars.yml
+
+- name: Obter Versão Inicial e Canal do Cluster
+  include_tasks: 01_get_initial_version.yml
+
+- name: Determinar Saltos de Upgrade (Hops) EUS Dinamicamente
+  include_tasks: 02_determine_hops.yml
+  # Só executa se um upgrade for realmente necessário
+  when: "current_cluster_version is version(target_aro_version, '<')"
+
+- name: Checagem de Saúde Inicial do Cluster
+  include_tasks: 03_initial_health_check.yml
+  vars:
+    health_check_stage_name: "Pré-Upgrade Inicial (Cluster: {{ cluster_name }})"
+
+- name: Salvar Estado e "Zerar" PDBs (se upgrade for necessário)
+  include_tasks: 04_manage_pdbs_pre.yml
+  when: "current_cluster_version is version(target_aro_version, '<')"
+
+- name: Expor dados para o próximo Job Template no Workflow (AAP)
+  ansible.builtin.set_stats:
+    data:
+      current_cluster_version_stat: "{{ current_cluster_version }}"
+      initial_cluster_channel_stat: "{{ initial_cluster_channel | default('') }}"
+      target_aro_version_stat: "{{ target_aro_version }}"
+      target_channel_eus_stat: "{{ target_channel_eus }}"
+      cluster_name_stat: "{{ cluster_name }}"
+      upgrade_hops_stat: "{{ calculated_upgrade_hops | default([]) }}" # Pode estar vazio se já no alvo
+      original_pdbs_specs_stat: "{{ original_pdbs_specs | default([]) }}"
+      original_pdbs_metadata_stat: "{{ original_pdbs_metadata | default([]) }}"
+    per_host: false # Importante para set_stats em jobs com localhost

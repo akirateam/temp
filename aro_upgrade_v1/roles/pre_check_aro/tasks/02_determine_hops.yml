@@ -1,0 +1,149 @@
+---
+- name: Inicializar variáveis para descoberta de saltos em {{ cluster_name }}
+  ansible.builtin.set_fact:
+    calculated_upgrade_hops: []
+    simulated_current_version: "{{ current_cluster_version }}"
+    simulated_current_eus_channel: "{{ initial_cluster_channel }}" # Canal EUS da versão atual do cluster
+    iteration: 0
+    hop_found_in_last_iteration: true # Para iniciar o loop
+
+- name: "Coletar 'availableUpdates' do cluster {{ cluster_name }} (uma vez para o planejamento)"
+  kubernetes.core.k8s_info:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+  register: r_cv_live_state
+
+- name: Validar que availableUpdates foi obtido
+  ansible.builtin.assert:
+    that:
+      - r_cv_live_state.resources is defined
+      - r_cv_live_state.resources | length > 0
+      - r_cv_live_state.resources[0].status.availableUpdates is defined
+    fail_msg: "Não foi possível obter 'availableUpdates' do ClusterVersion para determinar os saltos."
+    quiet: true
+
+- name: Determinar saltos de upgrade EUS dinamicamente para {{ cluster_name }}
+  vars:
+    live_available_updates: "{{ r_cv_live_state.resources[0].status.availableUpdates | default([]) }}"
+  block:
+    - name: "Iteração {{ iteration + 1 }}: Buscando próximo salto de {{ simulated_current_version }} (canal EUS simulado: {{ simulated_current_eus_channel }}) para {{ target_aro_version }} (canal EUS final: {{ target_channel_eus }})"
+      ansible.builtin.set_fact:
+        next_hop_candidate: null
+        hop_found_this_iteration: false # Resetar para esta iteração
+
+    # --- Prioridade 1: Patch dentro do EUS Minor Atual (simulated_current_eus_channel) ---
+    - name: "Prioridade 1: Procurar patch EUS em {{ simulated_current_eus_channel }}"
+      vars:
+        current_minor_candidates: |
+          {% set candidates = [] %}
+          {% for update in live_available_updates %}
+            {% if update.version.split('.')[0] == simulated_current_version.split('.')[0] and
+                  update.version.split('.')[1] == simulated_current_version.split('.')[1] and
+                  update.version is version(simulated_current_version, '>') %}
+              {% set is_in_channel = false %}
+              {% if 'channels' in update and update.channels is iterable %}
+                {% for ch in update.channels %}{% if ch == simulated_current_eus_channel %}{% set is_in_channel = true %}{% endif %}{% endfor %}
+              {% endif %}
+              {% if is_in_channel %}
+                {% if simulated_current_eus_channel == target_channel_eus %}
+                  {% if update.version is version(target_aro_version, '<=') %}
+                    {% set candidates = candidates + [update.version] %}
+                  {% endif %}
+                {% else %}
+                  {% set candidates = candidates + [update.version] %}
+                {% endif %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+          {{ candidates | sort(version=true) }}
+      ansible.builtin.set_fact:
+        next_hop_candidate: "{{ current_minor_candidates[0] if current_minor_candidates | length > 0 else null }}"
+        hop_found_this_iteration: "{{ true if current_minor_candidates | length > 0 else false }}"
+      when: not hop_found_this_iteration
+
+    # --- Prioridade 2: Salto para o Próximo EUS Minor Relevante ---
+    - name: "Prioridade 2: Procurar salto para próximo EUS minor (objetivando {{ target_channel_eus }})"
+      vars:
+        simulated_major_int: "{{ simulated_current_version.split('.')[0] | int }}"
+        simulated_minor_int: "{{ simulated_current_version.split('.')[1] | int }}"
+        target_channel_major_int: "{{ target_channel_eus.split('-')[1].split('.')[0] | int }}"
+        target_channel_minor_int: "{{ target_channel_eus.split('-')[1].split('.')[1] | int }}"
+        expected_next_eus_minor_val: -1
+        next_channel_to_check: ""
+        # Lógica para determinar o próximo EUS minor par
+        {% if simulated_major_int == target_channel_major_int and simulated_minor_int < target_channel_minor_int %}
+          {# ARO EUS geralmente pula de 2 em 2 nos minors pares (ex: 4.14 -> 4.16) #}
+          {% set _potential_next_minor = simulated_minor_int + 2 %}
+          {% if _potential_next_minor <= target_channel_minor_int %}
+            {% set expected_next_eus_minor_val = _potential_next_minor %}
+            {% set next_channel_to_check = "eus-" + simulated_major_int|string + "." + expected_next_eus_minor_val|string %}
+          {% endif %}
+        {% endif %}
+        cross_minor_candidates: |
+          {% set candidates = [] %}
+          {% if next_channel_to_check != "" %}
+            {% for update in live_available_updates %}
+              {% if update.version.split('.')[0] | int == simulated_major_int and 
+                    update.version.split('.')[1] | int == expected_next_eus_minor_val and
+                    update.version is version(simulated_current_version, '>') %}
+                {% set is_in_channel = false %}
+                {% if 'channels' in update and update.channels is iterable %}
+                  {% for ch in update.channels %}{% if ch == next_channel_to_check %}{% set is_in_channel = true %}{% endif %}{% endfor %}
+                {% endif %}
+                {% if is_in_channel %}
+                  {% if next_channel_to_check == target_channel_eus %}
+                    {% if update.version is version(target_aro_version, '<=') %}
+                      {% set candidates = candidates + [update.version] %}
+                    {% endif %}
+                  {% else %}
+                    {% set candidates = candidates + [update.version] %}
+                  {% endif %}
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+          {% endif %}
+          {{ candidates | sort(version=true) }}
+      ansible.builtin.set_fact:
+        next_hop_candidate: "{{ cross_minor_candidates[0] if cross_minor_candidates | length > 0 else null }}"
+        simulated_current_eus_channel: "{{ next_channel_to_check if cross_minor_candidates | length > 0 else simulated_current_eus_channel }}"
+        hop_found_this_iteration: "{{ true if cross_minor_candidates | length > 0 else false }}"
+      when: not hop_found_this_iteration
+
+    - name: Registrar salto encontrado e atualizar simulação
+      when: hop_found_this_iteration and next_hop_candidate is not none
+      block:
+        - ansible.builtin.debug:
+            msg: "Cluster {{ cluster_name }}: Salto EUS encontrado de {{ simulated_current_version }} para {{ next_hop_candidate }} (novo canal simulado: {{ simulated_current_eus_channel }})"
+        - ansible.builtin.set_fact:
+            calculated_upgrade_hops: "{{ calculated_upgrade_hops + [next_hop_candidate] }}"
+            simulated_current_version: "{{ next_hop_candidate }}"
+            iteration: "{{ iteration + 1 }}"
+
+    - name: Incrementar iteração (se nenhum salto foi encontrado, para sair do loop)
+      ansible.builtin.set_fact:
+        iteration: "{{ iteration + 1 }}"
+      when: not hop_found_this_iteration
+
+  until: simulated_current_version is version(target_aro_version, '>=') or not hop_found_this_iteration or iteration >= max_hop_discovery_iterations
+  retries: "{{ max_hop_discovery_iterations }}" # Controla o número máximo de "tentativas"
+  delay: 0 # Sem delay entre as iterações lógicas da simulação
+
+- name: "Verificar se o caminho completo até o alvo foi encontrado para {{ cluster_name }}"
+  when:
+    - simulated_current_version is version(target_aro_version, '<') # Se um upgrade era necessário E não alcançamos o alvo
+  block:
+    - ansible.builtin.debug:
+        msg: >
+          AVISO para {{ cluster_name }}: Não foi possível determinar um caminho de upgrade EUS completo até {{ target_aro_version }}
+          (canal {{ target_channel_eus }}) a partir de {{ current_cluster_version }} (canal {{ initial_cluster_channel }}).
+          Saltos encontrados: {{ calculated_upgrade_hops }}.
+          Última versão simulada: {{ simulated_current_version }}.
+          Verifique os 'availableUpdates' do ClusterVersion e a lógica de seleção de saltos EUS.
+    - ansible.builtin.fail: # Falhar se não encontrar o caminho completo
+        msg: "Falha ao determinar caminho de upgrade EUS completo para {{ target_aro_version }}."
+
+- name: "Exibir saltos de upgrade EUS determinados para {{ cluster_name }}"
+  ansible.builtin.debug:
+    var: calculated_upgrade_hops
+  when: calculated_upgrade_hops is defined and calculated_upgrade_hops | length > 0

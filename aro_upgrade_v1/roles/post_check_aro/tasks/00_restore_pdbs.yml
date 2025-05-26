@@ -1,0 +1,15 @@
+---
+- name: "Restaurar PDBs para o estado original em {{ cluster_name }}"
+  kubernetes.core.k8s:
+    state: present # Garante que o PDB exista com esta definição
+    definition:
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata: "{{ original_pdbs_metadata[item_idx] }}" # Usa os metadados originais (nome, namespace, labels, etc.)
+      spec: "{{ original_pdbs_specs[item_idx] }}"       # Usa a spec original
+  loop: "{{ original_pdbs_specs }}" # Loop sobre as specs
+  loop_control:
+    index_var: item_idx # Usar o índice para acessar os metadados correspondentes
+    label: "Restaurando PDB {{ original_pdbs_metadata[item_idx].namespace }}/{{ original_pdbs_metadata[item_idx].name }} em {{ cluster_name }}"
+  # Adicionar when para garantir que o índice não saia do limite se as listas não tiverem o mesmo tamanho (deveriam ter)
+  when: item_idx < (original_pdbs_metadata | length)

@@ -1,0 +1,32 @@
+---
+- name: "Salvar estado dos PDBs para {{ cluster_name }}"
+  kubernetes.core.k8s_info:
+    kind: PodDisruptionBudget
+    api_version: policy/v1
+  register: r_pdbs_original_state
+
+- name: Armazenar especificações originais dos PDBs
+  ansible.builtin.set_fact:
+    original_pdbs_specs: "{{ r_pdbs_original_state.resources | default([]) | map(attribute='spec') | list }}"
+    original_pdbs_metadata: "{{ r_pdbs_original_state.resources | default([]) | map(attribute='metadata') | list }}"
+  when: r_pdbs_original_state.resources is defined and r_pdbs_original_state.resources | length > 0
+
+- name: "Zerar PDBs (permitir todas as disrupções) em {{ cluster_name }}"
+  kubernetes.core.k8s_patch:
+    kind: PodDisruptionBudget
+    api_version: policy/v1
+    name: "{{ item.metadata.name }}"
+    namespace: "{{ item.metadata.namespace }}"
+    # Usar o diretório 'templates' dentro da role
+    definition: "{{ lookup('template', 'pdb_patch_definition.json.j2') | from_json }}"
+  vars:
+    current_pdb_spec: "{{ item.spec }}" # Passar a spec atual para o template
+  loop: "{{ r_pdbs_original_state.resources }}"
+  when: r_pdbs_original_state.resources is defined and r_pdbs_original_state.resources | length > 0
+  loop_control:
+    label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+
+- name: "Debug: PDBs gerenciados em {{ cluster_name }} (Opcional)"
+  ansible.builtin.debug:
+    msg: "PDBs originais em {{ cluster_name }} cujos estados foram salvos: {{ original_pdbs_metadata | map(attribute='name') | list }}"
+  when: original_pdbs_metadata is defined and original_pdbs_metadata | length > 0

@@ -1,0 +1,31 @@
+aro_upgrade_v1/
+├── roles/
+│   ├── pre_check_aro/
+│   │   ├── tasks/
+│   │   │   ├── main.yml
+│   │   │   ├── 00_validate_vars.yml
+│   │   │   ├── 01_get_initial_version.yml
+│   │   │   ├── 02_determine_hops.yml
+│   │   │   ├── 03_initial_health_check.yml
+│   │   │   └── 04_manage_pdbs_pre.yml
+│   │   ├── templates/
+│   │   │   └── pdb_patch_definition.json.j2
+│   │   └── defaults/
+│   │       └── main.yml
+│   ├── upgrade_aro_hops/
+│   │   ├── tasks/
+│   │   │   ├── main.yml
+│   │   │   ├── _common_health_check.yml
+│   │   │   └── _perform_single_hop.yml
+│   │   └── defaults/
+│   │       └── main.yml
+│   └── post_check_aro/
+│       ├── tasks/
+│       │   ├── main.yml
+│       │   ├── 00_restore_pdbs.yml
+│       │   └── 01_final_health_check.yml
+│       └── defaults/
+│           └── main.yml
+├── playbook_01_pre_check.yml
+├── playbook_02_upgrade_hops.yml
+└── playbook_03_post_check.yml

@@ -1,0 +1,1 @@
+Realizar o trabalho conforme jupyter notebook disponível no github e alinhado em sala
