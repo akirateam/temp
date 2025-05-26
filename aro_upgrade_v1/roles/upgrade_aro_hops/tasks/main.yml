@@ -6,7 +6,6 @@
       - target_aro_version_stat is defined and target_aro_version_stat | length > 0
       - target_channel_eus_stat is defined and target_channel_eus_stat | length > 0
       - cluster_name_stat is defined and cluster_name_stat | length > 0
-      - azure_resource_group_stat is defined and azure_resource_group_stat | length > 0
       - current_cluster_version_stat is defined and current_cluster_version_stat | length > 0
       - initial_cluster_channel_stat is defined
       - control_mcps_globally_stat is defined
@@ -16,7 +15,6 @@
 - name: Definir fatos locais a partir de stats do job anterior (Fase de Upgrade)
   ansible.builtin.set_fact:
     cluster_name: "{{ cluster_name_stat }}"
-    azure_resource_group: "{{ azure_resource_group_stat }}"
     upgrade_hops: "{{ upgrade_hops_stat }}"
     target_aro_version: "{{ target_aro_version_stat }}"
     target_channel_eus: "{{ target_channel_eus_stat }}"
@@ -27,13 +25,13 @@
 
 - name: "Informar sobre os saltos a serem realizados em {{ cluster_name }}"
   ansible.builtin.debug:
-    msg: "Cluster: {{ cluster_name }}. Resource Group: {{ azure_resource_group }}. Iniciando processo de upgrade com os seguintes saltos: {{ upgrade_hops }}. Controle Global de MCPs: {{ control_mcps_globally }}"
+    msg: "Cluster: {{ cluster_name }}. Iniciando processo de upgrade com os seguintes saltos: {{ upgrade_hops }}. Controle Global de MCPs: {{ control_mcps_globally }}"
   when: upgrade_hops is defined and upgrade_hops | length > 0
 
 - name: "Bloco Principal de Upgrade (com tratamento de falhas)"
   when: upgrade_hops is defined and upgrade_hops | length > 0
   block:
-    - name: "PAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s_json_patch"
+    - name: "PAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s_json_patch (tentativa com replace)"
       kubernetes.core.k8s_json_patch:
         kind: MachineConfigPool
         api_version: machineconfiguration.openshift.io/v1
@@ -42,13 +40,13 @@
           - op: replace
             path: /spec/paused
             value: true
-      register: r_mcp_global_pause_status
+      register: r_mcp_global_pause_replace_status
       when: control_mcps_globally
       retries: 3
       delay: 10
       ignore_errors: true
 
-    - name: "PAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s_json_patch (tentativa com 'add' se 'replace' falhou)"
+    - name: "PAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s_json_patch (tentativa com add se replace falhou)"
       kubernetes.core.k8s_json_patch:
         kind: MachineConfigPool
         api_version: machineconfiguration.openshift.io/v1
@@ -58,7 +56,7 @@
             path: /spec/paused
             value: true
       register: r_mcp_global_pause_add_status
-      when: control_mcps_globally and r_mcp_global_pause_status.failed
+      when: control_mcps_globally and r_mcp_global_pause_replace_status.failed
       retries: 3
       delay: 10
 
@@ -67,8 +65,7 @@
         _mcps_paused_by_this_job: true
       when:
         - control_mcps_globally
-        - >-
-          (r_mcp_global_pause_status is defined and not r_mcp_global_pause_status.failed) or
+        - (r_mcp_global_pause_replace_status is defined and not r_mcp_global_pause_replace_status.failed) or \
           (r_mcp_global_pause_add_status is defined and not r_mcp_global_pause_add_status.failed)
 
     - name: "Aguardar MCP worker ser efetivamente pausado globalmente em {{ cluster_name }}"
@@ -80,6 +77,8 @@
       until: >
         r_mcp_check_globally_paused.resources is defined and
         r_mcp_check_globally_paused.resources | length > 0 and
+        r_mcp_check_globally_paused.resources[0].spec.paused is defined and
+        r_mcp_check_globally_paused.resources[0].spec.paused == true and
         r_mcp_check_globally_paused.resources[0].status is defined and
         r_mcp_check_globally_paused.resources[0].status.conditions is defined and
         (((r_mcp_check_globally_paused.resources[0].status.conditions | selectattr('type', 'equalto', 'Paused') | list) or [{'status': 'False'}]) | first).status == 'True'
@@ -141,6 +140,10 @@
   until: >
     r_mcp_status_globally_updated.resources is defined and
     r_mcp_status_globally_updated.resources | length > 0 and
+    r_mcp_status_globally_updated.resources[0].status is defined and
+    r_mcp_status_globally_updated.resources[0].status.conditions is defined and
+    r_mcp_status_globally_updated.resources[0].spec.paused is defined and
+    r_mcp_status_globally_updated.resources[0].spec.paused == false and
     r_mcp_status_globally_updated.resources[0].status.updatedMachineCount is defined and
     r_mcp_status_globally_updated.resources[0].status.machineCount is defined and
     r_mcp_status_globally_updated.resources[0].status.updatedMachineCount == r_mcp_status_globally_updated.resources[0].status.machineCount and
@@ -189,7 +192,6 @@
       target_aro_version_stat: "{{ target_aro_version }}"
       target_channel_eus_stat: "{{ target_channel_eus }}"
       cluster_name_stat: "{{ cluster_name }}"
-      azure_resource_group_stat: "{{ azure_resource_group }}"
       initial_cluster_version_stat: "{{ _initial_cluster_version_for_summary }}"
       initial_cluster_channel_stat: "{{ _initial_cluster_channel_for_summary }}"
     per_host: false
