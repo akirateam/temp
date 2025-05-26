@@ -11,20 +11,43 @@
     original_pdbs_metadata: "{{ r_pdbs_original_state.resources | default([]) | map(attribute='metadata') | list }}"
   when: r_pdbs_original_state.resources is defined and r_pdbs_original_state.resources | length > 0
 
-- name: "Zerar PDBs (permitir todas as disrupções) em {{ cluster_name }}"
-  kubernetes.core.k8s_patch:
+- name: "Zerar PDBs (permitir todas as disrupções) em {{ cluster_name }} usando k8s_json_patch"
+  kubernetes.core.k8s_json_patch:
     kind: PodDisruptionBudget
     api_version: policy/v1
-    name: "{{ item.metadata.name }}"
-    namespace: "{{ item.metadata.namespace }}"
-    # Usar o diretório 'templates' dentro da role
-    definition: "{{ lookup('template', 'pdb_patch_definition.json.j2') | from_json }}"
-  vars:
-    current_pdb_spec: "{{ item.spec }}" # Passar a spec atual para o template
+    name: "{{ pdb_item.metadata.name }}"
+    namespace: "{{ pdb_item.metadata.namespace }}"
+    patch: >-
+      {% set patch_operations = [] %}
+      {% if pdb_item.spec.minAvailable is defined and pdb_item.spec.minAvailable is not none %}
+      {%   set patch_operations = patch_operations + [{"op": "replace", "path": "/spec/minAvailable", "value": 0 }] %}
+      {# Se minAvailable existe, também removemos maxUnavailable para evitar conflitos, caso exista #}
+      {%   if pdb_item.spec.maxUnavailable is defined %}
+      {%     set patch_operations = patch_operations + [{"op": "remove", "path": "/spec/maxUnavailable" }] %}
+      {%   endif %}
+      {% elif pdb_item.spec.maxUnavailable is defined and pdb_item.spec.maxUnavailable is not none %}
+      {%   set patch_operations = patch_operations + [{"op": "replace", "path": "/spec/maxUnavailable", "value": "100%" }] %}
+      {# Se maxUnavailable existe, também removemos minAvailable para evitar conflitos, caso exista #}
+      {%   if pdb_item.spec.minAvailable is defined %}
+      {%     set patch_operations = patch_operations + [{"op": "remove", "path": "/spec/minAvailable" }] %}
+      {%   endif %}
+      {% else %}
+      {# Se nenhum dos dois está definido, adicionamos minAvailable: 0 #}
+      {# Primeiro verificamos se spec existe, se não, adicionamos spec e depois minAvailable #}
+      {%   if pdb_item.spec is not defined or pdb_item.spec is none %}
+      {%     set patch_operations = patch_operations + [{"op": "add", "path": "/spec", "value": { "minAvailable": 0 } }] %}
+      {%   else %}
+      {%     set patch_operations = patch_operations + [{"op": "add", "path": "/spec/minAvailable", "value": 0 }] %}
+      {%   endif %}
+      {% endif %}
+      {{ patch_operations }}
   loop: "{{ r_pdbs_original_state.resources }}"
-  when: r_pdbs_original_state.resources is defined and r_pdbs_original_state.resources | length > 0
   loop_control:
-    label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+    loop_var: pdb_item
+    label: "{{ pdb_item.metadata.namespace }}/{{ pdb_item.metadata.name }}"
+  when:
+    - r_pdbs_original_state.resources is defined
+    - r_pdbs_original_state.resources | length > 0
 
 - name: "Debug: PDBs gerenciados em {{ cluster_name }} (Opcional)"
   ansible.builtin.debug:
