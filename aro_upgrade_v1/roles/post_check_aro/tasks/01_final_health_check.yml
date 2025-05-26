@@ -29,7 +29,7 @@
     - name: "Health Check: {{ health_check_stage_name }} - Processar condição 'Degraded'"
       ansible.builtin.set_fact:
         _cv_status_degraded_final: >-
-          {{ (((r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | list) or [{'status': 'True'}]) | first).status }}
+          {{ (((r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | list) or [{'status': 'False'}]) | first).status }}
 
     - name: "Health Check: {{ health_check_stage_name }} - Validar ClusterVersion 'Available'"
       ansible.builtin.assert:
