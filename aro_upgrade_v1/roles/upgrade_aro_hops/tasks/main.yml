@@ -6,6 +6,7 @@
       - target_aro_version_stat is defined and target_aro_version_stat | length > 0
       - target_channel_eus_stat is defined and target_channel_eus_stat | length > 0
       - cluster_name_stat is defined and cluster_name_stat | length > 0
+      - azure_resource_group_stat is defined and azure_resource_group_stat | length > 0
       - current_cluster_version_stat is defined and current_cluster_version_stat | length > 0
       - initial_cluster_channel_stat is defined
       - control_mcps_globally_stat is defined
@@ -15,6 +16,7 @@
 - name: Definir fatos locais a partir de stats do job anterior (Fase de Upgrade)
   ansible.builtin.set_fact:
     cluster_name: "{{ cluster_name_stat }}"
+    azure_resource_group: "{{ azure_resource_group_stat }}"
     upgrade_hops: "{{ upgrade_hops_stat }}"
     target_aro_version: "{{ target_aro_version_stat }}"
     target_channel_eus: "{{ target_channel_eus_stat }}"
@@ -25,7 +27,7 @@
 
 - name: "Informar sobre os saltos a serem realizados em {{ cluster_name }}"
   ansible.builtin.debug:
-    msg: "Cluster: {{ cluster_name }}. Iniciando processo de upgrade com os seguintes saltos: {{ upgrade_hops }}. Controle Global de MCPs: {{ control_mcps_globally }}"
+    msg: "Cluster: {{ cluster_name }}. Resource Group: {{ azure_resource_group }}. Iniciando processo de upgrade com os seguintes saltos: {{ upgrade_hops }}. Controle Global de MCPs: {{ control_mcps_globally }}"
   when: upgrade_hops is defined and upgrade_hops | length > 0
 
 - name: "Bloco Principal de Upgrade (com tratamento de falhas)"
@@ -57,15 +59,16 @@
             value: true
       register: r_mcp_global_pause_add_status
       when: control_mcps_globally and r_mcp_global_pause_status.failed
-      retries: 3 # Adicionado retry aqui também
-      delay: 10  # Adicionado delay aqui também
+      retries: 3
+      delay: 10
 
     - name: "Definir flag _mcps_paused_by_this_job"
       ansible.builtin.set_fact:
         _mcps_paused_by_this_job: true
       when:
         - control_mcps_globally
-        - (r_mcp_global_pause_status is defined and not r_mcp_global_pause_status.failed) or \
+        - >-
+          (r_mcp_global_pause_status is defined and not r_mcp_global_pause_status.failed) or
           (r_mcp_global_pause_add_status is defined and not r_mcp_global_pause_add_status.failed)
 
     - name: "Aguardar MCP worker ser efetivamente pausado globalmente em {{ cluster_name }}"
@@ -145,3 +148,48 @@
     (((r_mcp_status_globally_updated.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | list) or [{'status': 'True'}]) | first).status == 'False' and
     (((r_mcp_status_globally_updated.resources[0].status.conditions | selectattr('type', 'equalto', 'Paused') | list) or [{'status': 'True'}]) | first).status == 'False'
   retries: 240
+  delay: 60
+  when:
+    - upgrade_hops is defined
+    - upgrade_hops | length > 0
+    - control_mcps_globally
+    - _mcps_paused_by_this_job
+    - r_mcp_global_unpause_status is defined and r_mcp_global_unpause_status.changed
+  vars:
+    ansible_command_timeout: 7200
+
+- name: "Health Check final dos MCPs após despausa global em {{ cluster_name }}"
+  ansible.builtin.include_tasks: _common_health_check.yml
+  vars:
+    health_check_stage_name: "Cluster {{ cluster_name }} - Pós-Upgrade e Despausa Global de MCPs"
+  when:
+    - upgrade_hops is defined
+    - upgrade_hops | length > 0
+    - control_mcps_globally
+    - _mcps_paused_by_this_job
+    - r_mcp_global_unpause_status is defined and r_mcp_global_unpause_status.changed
+
+- name: "Obter versão final do cluster {{ cluster_name }} após todos os saltos"
+  kubernetes.core.k8s_info:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+  register: r_final_cluster_version_info
+  retries: 3
+  delay: 10
+
+- name: Definir final_achieved_version
+  ansible.builtin.set_fact:
+    final_achieved_version: "{{ r_final_cluster_version_info.resources[0].status.desired.version if (r_final_cluster_version_info.resources is defined and r_final_cluster_version_info.resources | length > 0) else _initial_cluster_version_for_summary }}"
+
+- name: Expor dados para o próximo Job Template (Post-Check)
+  ansible.builtin.set_stats:
+    data:
+      final_achieved_version_stat: "{{ final_achieved_version }}"
+      target_aro_version_stat: "{{ target_aro_version }}"
+      target_channel_eus_stat: "{{ target_channel_eus }}"
+      cluster_name_stat: "{{ cluster_name }}"
+      azure_resource_group_stat: "{{ azure_resource_group }}"
+      initial_cluster_version_stat: "{{ _initial_cluster_version_for_summary }}"
+      initial_cluster_channel_stat: "{{ _initial_cluster_channel_for_summary }}"
+    per_host: false
