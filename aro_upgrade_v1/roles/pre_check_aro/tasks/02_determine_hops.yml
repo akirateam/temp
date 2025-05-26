@@ -1,53 +1,70 @@
 ---
-- name: Inicializar lista de saltos de upgrade para {{ cluster_name }}
+- name: Inicializar variáveis para descoberta de saltos em {{ cluster_name }}
   ansible.builtin.set_fact:
     calculated_upgrade_hops: []
+    simulated_current_version: "{{ current_cluster_version }}"
+    simulated_current_eus_channel: "{{ initial_cluster_channel }}"
+    iteration: 0
+    _no_more_hops_can_be_found: false
 
-- name: Definir saltos estáticos baseados na target_aro_version
-  block:
-    - name: Definir saltos para target_aro_version 4.16.40
-      ansible.builtin.set_fact:
-        calculated_upgrade_hops:
-          - "4.15.44"
-          - "4.16.40"
-      when: target_aro_version == "4.16.40"
-
-    - name: Definir saltos para target_aro_version 4.18.13
-      ansible.builtin.set_fact:
-        calculated_upgrade_hops:
-          - "4.17.19"
-          - "4.18.13"
-      when: target_aro_version == "4.18.13"
-
-    - name: Validar se a versão atual do cluster permite o caminho estático
-      ansible.builtin.assert:
-        that:
-          - (target_aro_version == "4.16.40" and current_cluster_version is version('4.15.44', '<')) or
-            (target_aro_version == "4.18.13" and current_cluster_version is version('4.17.19', '<'))
-        fail_msg: >
-          A versão atual do cluster ({{ current_cluster_version }}) não é compatível com o início do caminho de upgrade
-          estático definido para {{ target_aro_version }}. Para 4.16.40, comece de < 4.15.44 (idealmente 4.14.X).
-          Para 4.18.13, comece de < 4.17.19 (idealmente 4.16.X).
-      when: calculated_upgrade_hops | length > 0
-
-    - name: "Ajustar lista de saltos: remover saltos <= current_cluster_version"
-      ansible.builtin.set_fact:
-        calculated_upgrade_hops: "{{ calculated_upgrade_hops | select('version', '>', current_cluster_version) | list }}"
-      when: calculated_upgrade_hops | length > 0
-
+- name: "Coletar 'availableUpdates' do cluster {{ cluster_name }} (uma vez para o planejamento)"
+  kubernetes.core.k8s_info:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+  register: r_cv_live_state
   when: "current_cluster_version is version(target_aro_version, '<')"
 
-- name: "Exibir saltos de upgrade ESTÁTICOS determinados para {{ cluster_name }}"
+- name: Validar que availableUpdates foi obtido (se o upgrade é necessário)
+  ansible.builtin.assert:
+    that:
+      - r_cv_live_state.resources is defined
+      - r_cv_live_state.resources | length > 0
+      - r_cv_live_state.resources[0].status.availableUpdates is defined
+    fail_msg: "Não foi possível obter 'availableUpdates' do ClusterVersion para determinar os saltos."
+    quiet: true
+  when: "current_cluster_version is version(target_aro_version, '<')"
+
+- name: "Loop para determinar saltos de upgrade EUS dinamicamente para {{ cluster_name }}"
+  ansible.builtin.include_tasks: _iterate_hop_discovery.yml
+  vars:
+    live_available_updates_param: "{{ r_cv_live_state.resources[0].status.availableUpdates | default([]) }}"
+  loop: "{{ range(max_hop_discovery_iterations | int) | list }}"
+  until: simulated_current_version is version(target_aro_version, '>=') or _no_more_hops_can_be_found
+  when: "current_cluster_version is version(target_aro_version, '<')"
+
+- name: "Ajustar lista de saltos {{ cluster_name }}: garantir que todos os saltos são > {{ current_cluster_version }}"
+  ansible.builtin.set_fact:
+    calculated_upgrade_hops: "{{ calculated_upgrade_hops | select('version', '>', current_cluster_version) | list }}"
+  when:
+    - calculated_upgrade_hops is defined
+    - calculated_upgrade_hops | length > 0
+    - current_cluster_version is defined
+    - "current_cluster_version is version(target_aro_version, '<')"
+
+- name: "Debug: Lista de saltos após ajuste final (se houver)"
+  ansible.builtin.debug:
+    var: calculated_upgrade_hops
+  when:
+    - calculated_upgrade_hops is defined
+    - "current_cluster_version is version(target_aro_version, '<')"
+
+- name: "Verificar se o caminho completo até o alvo foi encontrado para {{ cluster_name }}"
+  when:
+    - "current_cluster_version is version(target_aro_version, '<')"
+    - simulated_current_version is version(target_aro_version, '<')
+  block:
+    - ansible.builtin.debug:
+        msg: >
+          AVISO para {{ cluster_name }}: Não foi possível determinar um caminho de upgrade EUS completo até {{ target_aro_version }}
+          (canal {{ target_channel_eus }}) a partir de {{ current_cluster_version }} (canal {{ initial_cluster_channel }}).
+          Saltos encontrados: {{ calculated_upgrade_hops }}.
+          Última versão simulada: {{ simulated_current_version }}.
+          Verifique os 'availableUpdates' do ClusterVersion e a lógica de seleção de saltos EUS.
+    - ansible.builtin.fail:
+        msg: "Falha ao determinar caminho de upgrade EUS completo para {{ target_aro_version }} no cluster {{ cluster_name }}."
+
+- name: "Exibir saltos de upgrade EUS determinados para {{ cluster_name }}"
   ansible.builtin.debug:
     var: calculated_upgrade_hops
   when: calculated_upgrade_hops is defined and calculated_upgrade_hops | length > 0
-
-- name: "Falhar se nenhum salto for aplicável e o upgrade for necessário (após ajuste)"
-  ansible.builtin.fail:
-    msg: >
-      Nenhum salto de upgrade aplicável encontrado para {{ cluster_name }} de {{ current_cluster_version }}
-      para {{ target_aro_version }} usando o caminho estático definido.
-      Saltos calculados (após filtro): {{ calculated_upgrade_hops }}.
-  when:
-    - "current_cluster_version is version(target_aro_version, '<')"
-    - calculated_upgrade_hops | length == 0
