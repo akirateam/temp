@@ -4,8 +4,8 @@
     calculated_upgrade_hops: []
     simulated_current_version: "{{ current_cluster_version }}"
     simulated_current_eus_channel: "{{ initial_cluster_channel }}"
-    iteration: 0
-    _no_more_hops_can_be_found: false
+    iteration_count_actual: 0 # Renomeado para evitar conflito com loop.index implícito
+    _keep_discovering_hops: true # Flag para controlar a execução da lógica interna do include
 
 - name: "Coletar 'availableUpdates' do cluster {{ cluster_name }} (uma vez para o planejamento)"
   kubernetes.core.k8s_info:
@@ -25,14 +25,25 @@
     quiet: true
   when: "current_cluster_version is version(target_aro_version, '<')"
 
-- name: "Loop para determinar saltos de upgrade EUS dinamicamente para {{ cluster_name }}"
-  ansible.builtin.include_tasks: _iterate_hop_discovery.yml
+# Loop que inclui a lógica de descoberta de um único salto.
+# O loop em si roda 'max_hop_discovery_iterations' vezes.
+# A lógica DENTRO do _iterate_hop_discovery_step.yml decide se algo ainda precisa ser feito.
+- name: "Loop principal para determinar saltos de upgrade EUS para {{ cluster_name }}"
+  ansible.builtin.include_tasks: _iterate_hop_discovery_step.yml
   vars:
+    # Passar os updates coletados para a tarefa incluída
     live_available_updates_param: "{{ r_cv_live_state.resources[0].status.availableUpdates | default([]) }}"
+    # Passar o índice do loop para que o include possa usá-lo se necessário (para debug ou lógica)
+    # Embora 'iteration_count_actual' seja o contador principal que estamos gerenciando.
+    # current_loop_iteration: "{{ ansible_loop.index }}" # ansible_loop.index é 1-based
   loop: "{{ range(max_hop_discovery_iterations | int) | list }}"
-  until: simulated_current_version is version(target_aro_version, '>=') or _no_more_hops_can_be_found
-  when: "current_cluster_version is version(target_aro_version, '<')"
+  # A condição 'when' aqui controla se o include_tasks é chamado.
+  # A flag _keep_discovering_hops é crucial e será atualizada pelo _iterate_hop_discovery_step.yml
+  when:
+    - current_cluster_version is version(target_aro_version, '<') # Só executa se upgrade é necessário
+    - _keep_discovering_hops # Continuar apenas se a flag permitir
 
+# ----- INÍCIO DA TAREFA DE AJUSTE/FILTRO DE SEGURANÇA (após o loop) -----
 - name: "Ajustar lista de saltos {{ cluster_name }}: garantir que todos os saltos são > {{ current_cluster_version }}"
   ansible.builtin.set_fact:
     calculated_upgrade_hops: "{{ calculated_upgrade_hops | select('version', '>', current_cluster_version) | list }}"
@@ -48,11 +59,18 @@
   when:
     - calculated_upgrade_hops is defined
     - "current_cluster_version is version(target_aro_version, '<')"
+# ----- FIM DA TAREFA DE AJUSTE/FILTRO DE SEGURANÇA -----
 
 - name: "Verificar se o caminho completo até o alvo foi encontrado para {{ cluster_name }}"
   when:
-    - "current_cluster_version is version(target_aro_version, '<')"
-    - simulated_current_version is version(target_aro_version, '<')
+    - "current_cluster_version is version(target_aro_version, '<')" # Se um upgrade era necessário
+    # A condição de parada do loop (_keep_discovering_hops=false) ocorre quando:
+    # 1. simulated_current_version >= target_aro_version
+    # 2. Nenhum hop foi encontrado na última iteração que tentou rodar
+    # 3. iteration_count_actual >= max_hop_discovery_iterations
+    # Então, se _keep_discovering_hops é false E simulated_current_version < target_aro_version, é uma falha.
+    - not _keep_discovering_hops # Se o loop parou por uma razão que não seja atingir o máximo de iterações
+    - simulated_current_version is version(target_aro_version, '<') # E ainda não chegamos ao alvo
   block:
     - ansible.builtin.debug:
         msg: >
@@ -60,6 +78,7 @@
           (canal {{ target_channel_eus }}) a partir de {{ current_cluster_version }} (canal {{ initial_cluster_channel }}).
           Saltos encontrados: {{ calculated_upgrade_hops }}.
           Última versão simulada: {{ simulated_current_version }}.
+          Iterações realizadas: {{ iteration_count_actual }}.
           Verifique os 'availableUpdates' do ClusterVersion e a lógica de seleção de saltos EUS.
     - ansible.builtin.fail:
         msg: "Falha ao determinar caminho de upgrade EUS completo para {{ target_aro_version }} no cluster {{ cluster_name }}."
