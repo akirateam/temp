@@ -1,4 +1,6 @@
 ---
+# ansible_aro_upgrade_v0.1/roles/upgrade_aro_hops/tasks/_common_health_check.yml
+
 - name: "Health Check (Comum): {{ health_check_stage_name }} - Coletar dados do ClusterVersion"
   kubernetes.core.k8s_info:
     kind: ClusterVersion
@@ -52,7 +54,7 @@
         fail_msg: "ClusterVersion está Degraded em {{ health_check_stage_name }}. Status Degraded ('{{ _cv_status_degraded_common }}') não é False. Condições: {{ r_cv_health_common.resources[0].status.conditions }}"
         quiet: true
 
-- name: "Health Check (Comum): {{ health_check_stage_name }} - Verificar ClusterOperators"
+- name: "Health Check (Comum): {{ health_check_stage_name }} - Coletar dados dos ClusterOperators"
   kubernetes.core.k8s_info:
     kind: ClusterOperator
     api_version: config.openshift.io/v1
@@ -64,17 +66,19 @@
 - name: "Health Check (Comum): {{ health_check_stage_name }} - Validar status dos ClusterOperators"
   ansible.builtin.assert:
     that:
-      - not item.status.conditions | selectattr('type', 'equalto', 'Available') | selectattr('status', 'equalto', 'False') | list
-      - not item.status.conditions | selectattr('type', 'equalto', 'Progressing') | selectattr('status', 'equalto', 'True') | list
-      - not item.status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | list
-    fail_msg: "ClusterOperator {{ item.metadata.name }} em {{ health_check_stage_name }} não está saudável. Condições: {{ item.status.conditions }}"
+      - co_item.status is defined and co_item.status.conditions is defined
+      - not co_item.status.conditions | selectattr('type', 'equalto', 'Available') | selectattr('status', 'equalto', 'False') | list
+      - not co_item.status.conditions | selectattr('type', 'equalto', 'Progressing') | selectattr('status', 'equalto', 'True') | list
+      - not co_item.status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | list
+    fail_msg: "ClusterOperator {{ co_item.metadata.name }} em {{ health_check_stage_name }} não está saudável. Condições: {{ co_item.status.conditions }}"
     quiet: true
   loop: "{{ r_co_health_common.resources | default([]) }}"
   loop_control:
-    label: "{{ item.metadata.name }}"
-  when: r_co_health_common.resources is defined
+    loop_var: co_item # Renomeado para co_item
+    label: "{{ co_item.metadata.name }}"
+  when: r_co_health_common.resources is defined and r_co_health_common.resources | length > 0
 
-- name: "Health Check (Comum): {{ health_check_stage_name }} - Verificar Nós"
+- name: "Health Check (Comum): {{ health_check_stage_name }} - Coletar dados dos Nós"
   kubernetes.core.k8s_info:
     kind: Node
     api_version: v1
@@ -86,4 +90,18 @@
 - name: "Health Check (Comum): {{ health_check_stage_name }} - Validar status dos Nós"
   ansible.builtin.assert:
     that:
-      - item.status.conditions
+      - node_item.status is defined and node_item.status.conditions is defined
+      - node_item.status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list
+    fail_msg: "Nó {{ node_item.metadata.name }} em {{ health_check_stage_name }} não está Ready. Condições: {{ node_item.status.conditions }}"
+    quiet: true
+  loop: "{{ r_node_health_common.resources | default([]) }}"
+  loop_control:
+    loop_var: node_item # Renomeado para node_item
+    label: "{{ node_item.metadata.name }}"
+  when: r_node_health_common.resources is defined and r_node_health_common.resources | length > 0
+
+- name: "Health Check (Comum): {{ health_check_stage_name }} - Sumário"
+  ansible.builtin.debug:
+    msg:
+      - "Saúde do Cluster ({{ health_check_stage_name }}): OK (Todas as asserções passaram)"
+      - "Versão Desejada Atual: {{ r_cv_health_common.resources[0].status.desired.version if r_cv_health_common.resources is defined and r_cv_health_common.resources | length > 0 else 'N/A' }}"
