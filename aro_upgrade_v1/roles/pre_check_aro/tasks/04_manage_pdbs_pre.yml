@@ -36,7 +36,7 @@
       {%     set _ = patch_ops.append({"op": "add", "path": "/spec/minAvailable", "value": 0 }) %}
       {%   endif %}
       {% endif %}
-      {{ patch_ops | to_json }}
+      {{ patch_ops }}
   loop: "{{ r_pdbs_original_state.resources }}"
   loop_control:
     loop_var: pdb_item
