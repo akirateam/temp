@@ -1,5 +1,5 @@
 ---
-- name: "Health Check (Comum): {{ health_check_stage_name }} - Verificar ClusterVersion"
+- name: "Health Check (Comum): {{ health_check_stage_name }} - Coletar dados do ClusterVersion"
   kubernetes.core.k8s_info:
     kind: ClusterVersion
     api_version: config.openshift.io/v1
@@ -7,22 +7,50 @@
   register: r_cv_health_common
   retries: 5
   delay: 15
-  vars:
-    _conditions_present: >-
-      {{ r_cv_health_common.resources is defined and
-         r_cv_health_common.resources | length > 0 and
-         r_cv_health_common.resources[0].status is defined and
-         r_cv_health_common.resources[0].status.conditions is defined }}
-    _available_check: >-
-      {{ _conditions_present and
-         (((r_cv_health_common.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | list) or [{'status': 'False'}]) | first).status == 'True' }}
-    _progressing_check: >-
-      {{ _conditions_present and
-         (((r_cv_health_common.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | list) or [{'status': 'True'}]) | first).status == 'False' }}
-    _degraded_check: >-
-      {{ _conditions_present and
-         (((r_cv_health_common.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | list) or [{'status': 'True'}]) | first).status == 'False' }}
-  until: _conditions_present and (_available_check | bool) and (_progressing_check | bool) and (_degraded_check | bool)
+  until: >
+    r_cv_health_common.resources is defined and
+    r_cv_health_common.resources | length > 0 and
+    r_cv_health_common.resources[0].status is defined and
+    r_cv_health_common.resources[0].status.conditions is defined
+
+- name: "Health Check (Comum): {{ health_check_stage_name }} - Avaliar e Validar Condições do ClusterVersion"
+  when: r_cv_health_common.resources is defined and r_cv_health_common.resources | length > 0
+  block:
+    - name: "Health Check (Comum): {{ health_check_stage_name }} - Processar condição 'Available'"
+      ansible.builtin.set_fact:
+        _cv_status_available_common: >-
+          {{ (((r_cv_health_common.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | list) or [{'status': 'False'}]) | first).status }}
+
+    - name: "Health Check (Comum): {{ health_check_stage_name }} - Processar condição 'Progressing'"
+      ansible.builtin.set_fact:
+        _cv_status_progressing_common: >-
+          {{ (((r_cv_health_common.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | list) or [{'status': 'True'}]) | first).status }}
+
+    - name: "Health Check (Comum): {{ health_check_stage_name }} - Processar condição 'Degraded'"
+      ansible.builtin.set_fact:
+        _cv_status_degraded_common: >-
+          {{ (((r_cv_health_common.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | list) or [{'status': 'True'}]) | first).status }}
+
+    - name: "Health Check (Comum): {{ health_check_stage_name }} - Validar ClusterVersion 'Available'"
+      ansible.builtin.assert:
+        that:
+          - _cv_status_available_common == 'True'
+        fail_msg: "ClusterVersion não está Available em {{ health_check_stage_name }}. Status Available: {{ _cv_status_available_common }}. Condições: {{ r_cv_health_common.resources[0].status.conditions }}"
+        quiet: true
+
+    - name: "Health Check (Comum): {{ health_check_stage_name }} - Validar ClusterVersion 'Progressing'"
+      ansible.builtin.assert:
+        that:
+          - _cv_status_progressing_common == 'False'
+        fail_msg: "ClusterVersion está Progressing em {{ health_check_stage_name }}. Status Progressing: {{ _cv_status_progressing_common }}. Condições: {{ r_cv_health_common.resources[0].status.conditions }}"
+        quiet: true
+
+    - name: "Health Check (Comum): {{ health_check_stage_name }} - Validar ClusterVersion 'Degraded'"
+      ansible.builtin.assert:
+        that:
+          - _cv_status_degraded_common == 'False'
+        fail_msg: "ClusterVersion está Degraded em {{ health_check_stage_name }}. Status Degraded: {{ _cv_status_degraded_common }}. Condições: {{ r_cv_health_common.resources[0].status.conditions }}"
+        quiet: true
 
 - name: "Health Check (Comum): {{ health_check_stage_name }} - Verificar ClusterOperators"
   kubernetes.core.k8s_info:
@@ -31,6 +59,7 @@
   register: r_co_health_common
   retries: 3
   delay: 10
+  until: r_co_health_common.resources is defined
 
 - name: "Health Check (Comum): {{ health_check_stage_name }} - Validar status dos ClusterOperators"
   ansible.builtin.assert:
@@ -40,15 +69,19 @@
       - not item.status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | list
     fail_msg: "ClusterOperator {{ item.metadata.name }} em {{ health_check_stage_name }} não está saudável. Condições: {{ item.status.conditions }}"
     quiet: true
-  loop: "{{ r_co_health_common.resources }}"
+  loop: "{{ r_co_health_common.resources | default([]) }}"
   loop_control:
     label: "{{ item.metadata.name }}"
+  when: r_co_health_common.resources is defined
 
 - name: "Health Check (Comum): {{ health_check_stage_name }} - Verificar Nós"
   kubernetes.core.k8s_info:
     kind: Node
     api_version: v1
   register: r_node_health_common
+  retries: 3
+  delay: 10
+  until: r_node_health_common.resources is defined
 
 - name: "Health Check (Comum): {{ health_check_stage_name }} - Validar status dos Nós"
   ansible.builtin.assert:
@@ -56,14 +89,13 @@
       - item.status.conditions | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list
     fail_msg: "Nó {{ item.metadata.name }} em {{ health_check_stage_name }} não está Ready. Condições: {{ item.status.conditions }}"
     quiet: true
-  loop: "{{ r_node_health_common.resources }}"
+  loop: "{{ r_node_health_common.resources | default([]) }}"
   loop_control:
     label: "{{ item.metadata.name }}"
+  when: r_node_health_common.resources is defined
 
 - name: "Health Check (Comum): {{ health_check_stage_name }} - Sumário"
   ansible.builtin.debug:
     msg:
-      - "Saúde do Cluster ({{ health_check_stage_name }}): OK"
-      - "Versão Desejada Atual: {{ r_cv_health_common.resources[0].status.desired.version }}"
-      - "ClusterOperators: {{ r_co_health_common.resources | length }} operadores, todos saudáveis."
-      - "Nós: {{ r_node_health_common.resources | length }} nós, todos Ready."
+      - "Saúde do Cluster ({{ health_check_stage_name }}): OK (Todas as asserções passaram)"
+      - "Versão Desejada Atual: {{ r_cv_health_common.resources[0].status.desired.version if r_cv_health_common.resources is defined and r_cv_health_common.resources | length > 0 else 'N/A' }}"
