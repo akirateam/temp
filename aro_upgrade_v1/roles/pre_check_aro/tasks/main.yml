@@ -5,9 +5,8 @@
 - name: Obter Versão Inicial e Canal do Cluster
   include_tasks: 01_get_initial_version.yml
 
-- name: Determinar Saltos de Upgrade (Hops) EUS Dinamicamente
+- name: Definir Saltos de Upgrade (Hops) Estáticos
   include_tasks: 02_determine_hops.yml
-  # Só executa se um upgrade for realmente necessário
   when: "current_cluster_version is version(target_aro_version, '<')"
 
 - name: Checagem de Saúde Inicial do Cluster
@@ -27,7 +26,7 @@
       target_aro_version_stat: "{{ target_aro_version }}"
       target_channel_eus_stat: "{{ target_channel_eus }}"
       cluster_name_stat: "{{ cluster_name }}"
-      upgrade_hops_stat: "{{ calculated_upgrade_hops | default([]) }}" # Pode estar vazio se já no alvo
+      upgrade_hops_stat: "{{ calculated_upgrade_hops | default([]) }}"
       original_pdbs_specs_stat: "{{ original_pdbs_specs | default([]) }}"
       original_pdbs_metadata_stat: "{{ original_pdbs_metadata | default([]) }}"
-    per_host: false # Importante para set_stats em jobs com localhost
+    per_host: false

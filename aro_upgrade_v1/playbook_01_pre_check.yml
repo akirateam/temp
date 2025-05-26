@@ -1,12 +1,17 @@
 ---
-- name: ARO Upgrade - Fase 1: Pré-Checagem e Preparação
+- name: "ARO Upgrade - Fase 1: Pré-Checagem e Preparação"
   hosts: localhost
   gather_facts: false
   vars:
     # Estas variáveis devem ser passadas como extra_vars no AAP Job Template
-    # Exemplo:
-    # target_aro_version: "4.16.50"
-    # target_channel_eus: "eus-4.16"
+    # Exemplo para 4.16.40:
+    # target_aro_version: "4.16.40"
+    # target_channel_eus: "eus-4.16" # Corresponde à target_aro_version
+    # cluster_name: "myaro01"
+    #
+    # Exemplo para 4.18.13:
+    # target_aro_version: "4.18.13"
+    # target_channel_eus: "eus-4.18" # Corresponde à target_aro_version
     # cluster_name: "myaro01"
   roles:
     - role: pre_check_aro

@@ -2,14 +2,12 @@
 - name: Validar variáveis de entrada do job anterior (Fase de Upgrade)
   ansible.builtin.assert:
     that:
-      - upgrade_hops_stat is defined # Pode ser lista vazia se já no alvo
+      - upgrade_hops_stat is defined
       - target_aro_version_stat is defined and target_aro_version_stat | length > 0
       - target_channel_eus_stat is defined and target_channel_eus_stat | length > 0
       - cluster_name_stat is defined and cluster_name_stat | length > 0
       - current_cluster_version_stat is defined and current_cluster_version_stat | length > 0
-      - initial_cluster_channel_stat is defined # Pode ser vazio se não for EUS, mas deve ser definido
-      # original_pdbs_specs_stat e original_pdbs_metadata_stat são opcionais aqui para a lógica de upgrade em si,
-      # mas precisam ser passados para o job de post_check
+      - initial_cluster_channel_stat is defined
     fail_msg: "Variáveis necessárias do job de pré-checagem não foram encontradas para a fase de upgrade."
     quiet: true
 
@@ -19,26 +17,56 @@
     upgrade_hops: "{{ upgrade_hops_stat }}"
     target_aro_version: "{{ target_aro_version_stat }}"
     target_channel_eus: "{{ target_channel_eus_stat }}"
-    # Guardar dados para passar para o próximo job (post_check)
     _initial_cluster_version_for_summary: "{{ current_cluster_version_stat }}"
     _initial_cluster_channel_for_summary: "{{ initial_cluster_channel_stat }}"
     _original_pdbs_specs_passthrough: "{{ original_pdbs_specs_stat | default([]) }}"
     _original_pdbs_metadata_passthrough: "{{ original_pdbs_metadata_stat | default([]) }}"
+    mcp_to_manage: ["worker"]
 
 - name: "Informar sobre os saltos a serem realizados em {{ cluster_name }}"
   ansible.builtin.debug:
-    msg: "Cluster: {{ cluster_name }}. Iniciando processo de upgrade com os seguintes saltos: {{ upgrade_hops }}"
+    msg: "Cluster: {{ cluster_name }}. Iniciando processo de upgrade com os seguintes saltos ESTÁTICOS: {{ upgrade_hops }}"
   when: upgrade_hops | length > 0
+
+- name: "PAUSAR MCPs ({{ mcp_to_manage | join(', ') }}) em {{ cluster_name }} antes do primeiro salto intermediário"
+  kubernetes.core.k8s_patch:
+    kind: MachineConfigPool
+    api_version: machineconfiguration.openshift.io/v1
+    name: "{{ item }}"
+    definition:
+      spec:
+        paused: true
+    retries: 3
+    delay: 10
+  loop: "{{ mcp_to_manage }}"
+  register: r_mcp_pause_status
+  when: upgrade_hops | length > 0
+  loop_control:
+    label: "mcp-pause-{{ item }}"
+
+- name: "Aguardar MCPs serem efetivamente pausados em {{ cluster_name }}"
+  kubernetes.core.k8s_info:
+    kind: MachineConfigPool
+    api_version: machineconfiguration.openshift.io/v1
+    name: "{{ item.item }}"
+  register: r_mcp_check_paused
+  until: (r_mcp_check_paused.resources[0].status.conditions | selectattr('type', 'equalto', 'Paused') | first).status == 'True'
+  retries: 12
+  delay: 30
+  loop: "{{ r_mcp_pause_status.results | default([]) }}"
+  when: item.changed | default(false)
+  loop_control:
+    label: "mcp-check-pause-{{ item.item }}"
 
 - name: Iterar sobre os saltos de upgrade para {{ cluster_name }}
   include_tasks: _perform_single_hop.yml
   loop: "{{ upgrade_hops }}"
   loop_control:
     loop_var: target_hop_version
-  when: upgrade_hops | length > 0 # Só executa se houver saltos planejados
+  when: upgrade_hops | length > 0
   register: r_hop_results
 
-- name: "Obter versão final do cluster {{ cluster_name }} após todos os saltos (ou se não houve saltos)"
+- name: "Obter versão do cluster {{ cluster_name }} após todos os saltos"
   kubernetes.core.k8s_info:
     kind: ClusterVersion
     api_version: config.openshift.io/v1
@@ -49,8 +77,44 @@
 
 - name: Definir final_achieved_version
   ansible.builtin.set_fact:
-    # Se não houve saltos (upgrade_hops estava vazio), a versão final é a inicial.
     final_achieved_version: "{{ r_final_cluster_version_info.resources[0].status.desired.version if (r_final_cluster_version_info.resources is defined and r_final_cluster_version_info.resources | length > 0) else current_cluster_version_stat }}"
+
+- name: "DESPAUSAR MCPs ({{ mcp_to_manage | join(', ') }}) em {{ cluster_name }} após o salto final"
+  kubernetes.core.k8s_patch:
+    kind: MachineConfigPool
+    api_version: machineconfiguration.openshift.io/v1
+    name: "{{ item }}"
+    definition:
+      spec:
+        paused: false
+  loop: "{{ mcp_to_manage }}"
+  register: r_mcp_unpause_status
+  when: upgrade_hops | length > 0
+  loop_control:
+    label: "mcp-unpause-{{ item }}"
+
+- name: "Aguardar MCPs ({{ mcp_to_manage | join(', ') }}) concluírem a atualização após despausar em {{ cluster_name }}"
+  kubernetes.core.k8s_info:
+    kind: MachineConfigPool
+    api_version: machineconfiguration.openshift.io/v1
+    name: "{{ item.item }}"
+  register: r_mcp_status_updated_final
+  until: >
+    r_mcp_status_updated_final.resources is defined and
+    r_mcp_status_updated_final.resources | length > 0 and
+    r_mcp_status_updated_final.resources[0].status.updatedMachineCount == r_mcp_status_updated_final.resources[0].status.machineCount and
+    (r_mcp_status_updated_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Updating') | first).status == 'False' and
+    (r_mcp_status_updated_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | first).status == 'False' and
+    ( (r_mcp_status_updated_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Paused') | first).status == 'False' or
+      not (r_mcp_status_updated_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Paused') | list) )
+  retries: 240
+  delay: 60
+  loop: "{{ r_mcp_unpause_status.results | default([]) }}"
+  when: item.changed | default(false)
+  loop_control:
+    label: "mcp-wait-unpause-{{ item.item }}"
+  vars:
+    ansible_command_timeout: 7200
 
 - name: Expor dados para o próximo Job Template (Post-Check)
   ansible.builtin.set_stats:
