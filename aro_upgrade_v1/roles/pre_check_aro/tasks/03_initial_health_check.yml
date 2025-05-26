@@ -12,9 +12,9 @@
     r_cv_health.resources | length > 0 and
     r_cv_health.resources[0].status is defined and
     r_cv_health.resources[0].status.conditions is defined and
-    (r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | first(default={'status': 'False'})).status == 'True' and
-    (r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | first(default={'status': 'True'})).status == 'False' and
-    (r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | first(default={'status': 'True'})).status == 'False'
+    (((r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | list) or [{'status': 'False'}]) | first).status == 'True' and
+    (((r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | list) or [{'status': 'True'}]) | first).status == 'False' and
+    (((r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | list) or [{'status': 'True'}]) | first).status == 'False'
 
 - name: "Health Check: {{ health_check_stage_name }} - Verificar ClusterOperators"
   kubernetes.core.k8s_info:
