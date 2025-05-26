@@ -14,7 +14,7 @@
     r_cv_health.resources[0].status.conditions is defined
 
 - name: "Health Check: {{ health_check_stage_name }} - Avaliar e Validar Condições do ClusterVersion"
-  when: r_cv_health.resources is defined and r_cv_health.resources | length > 0 # Prosseguir apenas se r_cv_health tem dados
+  when: r_cv_health.resources is defined and r_cv_health.resources | length > 0
   block:
     - name: "Health Check: {{ health_check_stage_name }} - Processar condição 'Available'"
       ansible.builtin.set_fact:
@@ -34,22 +34,22 @@
     - name: "Health Check: {{ health_check_stage_name }} - Validar ClusterVersion 'Available'"
       ansible.builtin.assert:
         that:
-          - _cv_status_available == 'True'
-        fail_msg: "ClusterVersion não está Available. Status Available: {{ _cv_status_available }}. Condições completas: {{ r_cv_health.resources[0].status.conditions }}"
+          - _cv_status_available | bool == true
+        fail_msg: "ClusterVersion não está Available. Status Available ('{{ _cv_status_available }}') não é True. Condições completas: {{ r_cv_health.resources[0].status.conditions }}"
         quiet: true
 
     - name: "Health Check: {{ health_check_stage_name }} - Validar ClusterVersion 'Progressing'"
       ansible.builtin.assert:
         that:
-          - _cv_status_progressing == 'False'
-        fail_msg: "ClusterVersion está Progressing. Status Progressing: {{ _cv_status_progressing }}. Condições completas: {{ r_cv_health.resources[0].status.conditions }}"
+          - _cv_status_progressing | bool == false
+        fail_msg: "ClusterVersion está Progressing. Status Progressing ('{{ _cv_status_progressing }}') não é False. Condições completas: {{ r_cv_health.resources[0].status.conditions }}"
         quiet: true
 
     - name: "Health Check: {{ health_check_stage_name }} - Validar ClusterVersion 'Degraded'"
       ansible.builtin.assert:
         that:
-          - _cv_status_degraded == 'False'
-        fail_msg: "ClusterVersion está Degraded. Status Degraded: {{ _cv_status_degraded }}. Condições completas: {{ r_cv_health.resources[0].status.conditions }}"
+          - _cv_status_degraded | bool == false
+        fail_msg: "ClusterVersion está Degraded. Status Degraded ('{{ _cv_status_degraded }}') não é False. Condições completas: {{ r_cv_health.resources[0].status.conditions }}"
         quiet: true
 
 - name: "Health Check: {{ health_check_stage_name }} - Verificar ClusterOperators"
