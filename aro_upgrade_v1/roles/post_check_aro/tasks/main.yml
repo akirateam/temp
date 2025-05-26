@@ -3,35 +3,30 @@
   ansible.builtin.assert:
     that:
       - final_achieved_version_stat is defined and final_achieved_version_stat | length > 0
-      - original_pdbs_specs_stat is defined # Pode ser lista vazia
-      - original_pdbs_metadata_stat is defined # Pode ser lista vazia
       - initial_cluster_version_stat is defined and initial_cluster_version_stat | length > 0
-      - initial_cluster_channel_stat is defined # Pode ser vazio se não for EUS, mas deve ser definido
       - target_aro_version_stat is defined and target_aro_version_stat | length > 0
-      - target_channel_eus_stat is defined and target_channel_eus_stat | length > 0
       - cluster_name_stat is defined and cluster_name_stat | length > 0
+      - azure_resource_group_stat is defined and azure_resource_group_stat | length > 0
+      - target_channel_eus_stat is defined
+      - initial_cluster_channel_stat is defined
     fail_msg: "Variáveis necessárias do job de upgrade não foram encontradas para a fase de pós-checagem."
     quiet: true
 
 - name: Definir fatos locais a partir de stats do job anterior (Fase de Pós-Checagem)
   ansible.builtin.set_fact:
     final_achieved_version: "{{ final_achieved_version_stat }}"
-    original_pdbs_specs: "{{ original_pdbs_specs_stat }}"
-    original_pdbs_metadata: "{{ original_pdbs_metadata_stat }}"
     initial_cluster_version: "{{ initial_cluster_version_stat }}"
-    initial_cluster_channel: "{{ initial_cluster_channel_stat }}"
+    initial_cluster_channel: "{{ initial_cluster_channel_stat | default('') }}"
     target_aro_version: "{{ target_aro_version_stat }}"
-    target_channel_eus: "{{ target_channel_eus_stat }}"
+    target_channel_eus: "{{ target_channel_eus_stat | default('') }}"
     cluster_name: "{{ cluster_name_stat }}"
+    azure_resource_group: "{{ azure_resource_group_stat }}"
 
-- name: "Restaurar PDBs para o estado original em {{ cluster_name }}"
-  include_tasks: 00_restore_pdbs.yml
-  # Só restaura se houver PDBs originais para restaurar e se um upgrade foi tentado (upgrade_hops não estava vazio no pre_check)
-  # A melhor maneira de saber se PDBs foram modificados é se original_pdbs_specs não está vazio.
-  when: original_pdbs_specs | length > 0
+- name: "Etapa de Restauração de PDBs (Removida)"
+  ansible.builtin.include_tasks: 00_restore_pdbs.yml
 
 - name: "Checagem de Saúde Final do Cluster {{ cluster_name }}"
-  include_tasks: 01_final_health_check.yml
+  ansible.builtin.include_tasks: 01_final_health_check.yml
   vars:
     health_check_stage_name: "Pós-Upgrade Final (Cluster: {{ cluster_name }}, Versão: {{ final_achieved_version }})"
 
@@ -40,8 +35,9 @@
     msg:
       - "WORKFLOW DE UPGRADE DO CLUSTER ARO {{ cluster_name }} CONCLUÍDO!"
       - "Cluster: {{ cluster_name }}"
+      - "Resource Group: {{ azure_resource_group }}"
       - "Versão Inicial: {{ initial_cluster_version }} (Canal EUS: {{ initial_cluster_channel if initial_cluster_channel else 'N/A' }})"
-      - "Versão Alvo Desejada: {{ target_aro_version }} (Canal EUS: {{ target_channel_eus }})"
+      - "Versão Alvo Desejada: {{ target_aro_version }} (Canal EUS: {{ target_channel_eus if target_channel_eus else 'N/A' }})"
       - "Versão Final Atingida: {{ final_achieved_version }}"
       - "Status Final do Cluster: Verificar logs das checagens de saúde finais."
       - >-

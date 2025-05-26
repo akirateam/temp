@@ -12,7 +12,6 @@
 - name: Definir current_cluster_version e initial_cluster_channel
   ansible.builtin.set_fact:
     current_cluster_version: "{{ r_cluster_version_initial.resources[0].status.desired.version }}"
-    # Usamos spec.channel como o canal EUS que o cluster está *tentando* seguir.
     initial_cluster_channel: "{{ r_cluster_version_initial.resources[0].spec.channel | default('') }}"
 
 - name: "Exibir informações do cluster {{ cluster_name }}"
@@ -33,7 +32,7 @@
       não parece ser um canal EUS. A automação de upgrade EUS pode não funcionar como esperado.
       Verifique o 'oc get clusterversion version -o yaml' e ajuste spec.channel se necessário.
     quiet: true
-  when: initial_cluster_channel | length > 0 # Só valida se um canal estiver definido
+  when: initial_cluster_channel | length > 0
 
 - name: "Verificar se o cluster {{ cluster_name }} já está na versão alvo ou superior"
   when: "current_cluster_version is version(target_aro_version, '>=')"

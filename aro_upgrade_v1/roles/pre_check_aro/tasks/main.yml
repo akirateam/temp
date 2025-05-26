@@ -1,22 +1,21 @@
 ---
 - name: Validar Variáveis de Entrada
-  include_tasks: 00_validate_vars.yml
+  ansible.builtin.include_tasks: 00_validate_vars.yml
 
 - name: Obter Versão Inicial e Canal do Cluster
-  include_tasks: 01_get_initial_version.yml
+  ansible.builtin.include_tasks: 01_get_initial_version.yml
 
-- name: Definir Saltos de Upgrade (Hops) Estáticos
-  include_tasks: 02_determine_hops.yml
+- name: Determinar/Validar Saltos de Upgrade (Hops) EUS
+  ansible.builtin.include_tasks: 02_determine_hops.yml
   when: "current_cluster_version is version(target_aro_version, '<')"
 
 - name: Checagem de Saúde Inicial do Cluster
-  include_tasks: 03_initial_health_check.yml
+  ansible.builtin.include_tasks: 03_initial_health_check.yml
   vars:
     health_check_stage_name: "Pré-Upgrade Inicial (Cluster: {{ cluster_name }})"
 
-- name: Salvar Estado e "Zerar" PDBs (se upgrade for necessário)
-  include_tasks: 04_manage_pdbs_pre.yml
-  when: "current_cluster_version is version(target_aro_version, '<')"
+- name: Etapa de Gerenciamento de PDBs (Removida)
+  ansible.builtin.include_tasks: 04_manage_pdbs_pre.yml
 
 - name: Expor dados para o próximo Job Template no Workflow (AAP)
   ansible.builtin.set_stats:
@@ -26,7 +25,7 @@
       target_aro_version_stat: "{{ target_aro_version }}"
       target_channel_eus_stat: "{{ target_channel_eus }}"
       cluster_name_stat: "{{ cluster_name }}"
+      azure_resource_group_stat: "{{ azure_resource_group }}"
       upgrade_hops_stat: "{{ calculated_upgrade_hops | default([]) }}"
-      original_pdbs_specs_stat: "{{ original_pdbs_specs | default([]) }}"
-      original_pdbs_metadata_stat: "{{ original_pdbs_metadata | default([]) }}"
+      control_mcps_globally_stat: "{{ control_mcps_globally | default(false) }}"
     per_host: false

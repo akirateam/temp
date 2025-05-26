@@ -5,7 +5,8 @@
       - target_aro_version is defined and target_aro_version | length > 0
       - target_channel_eus is defined and target_channel_eus is match("^eus-\\d+\\.\\d+$")
       - cluster_name is defined and cluster_name | length > 0
-    fail_msg: "As variáveis 'target_aro_version', 'target_channel_eus' (formato eus-X.Y) e 'cluster_name' são obrigatórias."
+      - azure_resource_group is defined and azure_resource_group | length > 0
+    fail_msg: "As variáveis 'target_aro_version', 'target_channel_eus' (formato eus-X.Y), 'cluster_name', e 'azure_resource_group' são obrigatórias."
     quiet: true
 
 - name: Validar correspondência entre target_aro_version e target_channel_eus
@@ -24,5 +25,6 @@
   ansible.builtin.debug:
     msg:
       - "Cluster para Upgrade: {{ cluster_name }}"
+      - "Resource Group: {{ azure_resource_group }}"
       - "Versão Alvo do Upgrade: {{ target_aro_version }}"
       - "Canal EUS Alvo: {{ target_channel_eus }}"

@@ -1,6 +1,4 @@
 ---
-# ansible_aro_upgrade_v0.1/roles/upgrade_aro_hops/tasks/_common_health_check.yml
-
 - name: "Health Check (Comum): {{ health_check_stage_name }} - Coletar dados do ClusterVersion"
   kubernetes.core.k8s_info:
     kind: ClusterVersion
@@ -74,7 +72,7 @@
     quiet: true
   loop: "{{ r_co_health_common.resources | default([]) }}"
   loop_control:
-    loop_var: co_item # Renomeado para co_item
+    loop_var: co_item
     label: "{{ co_item.metadata.name }}"
   when: r_co_health_common.resources is defined and r_co_health_common.resources | length > 0
 
@@ -96,7 +94,7 @@
     quiet: true
   loop: "{{ r_node_health_common.resources | default([]) }}"
   loop_control:
-    loop_var: node_item # Renomeado para node_item
+    loop_var: node_item
     label: "{{ node_item.metadata.name }}"
   when: r_node_health_common.resources is defined and r_node_health_common.resources | length > 0
 

@@ -6,107 +6,104 @@
       - target_aro_version_stat is defined and target_aro_version_stat | length > 0
       - target_channel_eus_stat is defined and target_channel_eus_stat | length > 0
       - cluster_name_stat is defined and cluster_name_stat | length > 0
+      - azure_resource_group_stat is defined and azure_resource_group_stat | length > 0
       - current_cluster_version_stat is defined and current_cluster_version_stat | length > 0
       - initial_cluster_channel_stat is defined
       - control_mcps_globally_stat is defined
-    fail_msg: "Variáveis necessárias do job de pré-checagem não foram encontradas para a fase de upgrade. Verifique se todas as '..._stat' vars foram passadas."
+    fail_msg: "Variáveis necessárias do job de pré-checagem não foram encontradas para a fase de upgrade."
     quiet: true
 
 - name: Definir fatos locais a partir de stats do job anterior (Fase de Upgrade)
   ansible.builtin.set_fact:
     cluster_name: "{{ cluster_name_stat }}"
+    azure_resource_group: "{{ azure_resource_group_stat }}"
     upgrade_hops: "{{ upgrade_hops_stat }}"
     target_aro_version: "{{ target_aro_version_stat }}"
     target_channel_eus: "{{ target_channel_eus_stat }}"
     control_mcps_globally: "{{ control_mcps_globally_stat | bool }}"
     _initial_cluster_version_for_summary: "{{ current_cluster_version_stat }}"
     _initial_cluster_channel_for_summary: "{{ initial_cluster_channel_stat }}"
-    _original_pdbs_specs_passthrough: "{{ original_pdbs_specs_stat | default([]) }}"
-    _original_pdbs_metadata_passthrough: "{{ original_pdbs_metadata_stat | default([]) }}"
+    _mcps_paused_by_this_job: false
 
 - name: "Informar sobre os saltos a serem realizados em {{ cluster_name }}"
   ansible.builtin.debug:
-    msg: "Cluster: {{ cluster_name }}. Iniciando processo de upgrade com os seguintes saltos: {{ upgrade_hops }}. Controle Global de MCPs: {{ control_mcps_globally }}"
+    msg: "Cluster: {{ cluster_name }}. Resource Group: {{ azure_resource_group }}. Iniciando processo de upgrade com os seguintes saltos: {{ upgrade_hops }}. Controle Global de MCPs: {{ control_mcps_globally }}"
   when: upgrade_hops is defined and upgrade_hops | length > 0
 
-- name: "PAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s_json_patch"
-  kubernetes.core.k8s_json_patch:
-    kind: MachineConfigPool
-    api_version: machineconfiguration.openshift.io/v1
-    name: worker
-    patch:
-      - op: replace # Tenta substituir. Falhará se /spec/paused não existir.
-        path: /spec/paused
-        value: true
-  register: r_mcp_global_pause_status
-  retries: 3
-  delay: 10
-  when:
-    - upgrade_hops is defined
-    - upgrade_hops | length > 0
-    - control_mcps_globally
-  ignore_errors: true # Ignorar erro temporariamente para ver se o 'add' funciona
-
-- name: "PAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s_json_patch (tentativa com 'add')"
-  kubernetes.core.k8s_json_patch:
-    kind: MachineConfigPool
-    api_version: machineconfiguration.openshift.io/v1
-    name: worker
-    patch:
-      - op: add # Tenta adicionar. Falhará se /spec/paused já existir.
-        path: /spec/paused
-        value: true
-  register: r_mcp_global_pause_add_status
-  retries: 3
-  delay: 10
-  when:
-    - upgrade_hops is defined
-    - upgrade_hops | length > 0
-    - control_mcps_globally
-    - r_mcp_global_pause_status is defined and r_mcp_global_pause_status.failed # Só tenta 'add' se 'replace' falhou
-
-- name: "Aguardar MCP worker ser efetivamente pausado globalmente em {{ cluster_name }}"
-  kubernetes.core.k8s_info:
-    kind: MachineConfigPool
-    api_version: machineconfiguration.openshift.io/v1
-    name: worker
-  register: r_mcp_check_globally_paused
-  until: (r_mcp_check_globally_paused.resources[0].status.conditions | selectattr('type', 'equalto', 'Paused') | first(default={})).status == 'True'
-  retries: 12
-  delay: 30
-  when:
-    - upgrade_hops is defined
-    - upgrade_hops | length > 0
-    - control_mcps_globally
-    - (r_mcp_global_pause_status is defined and not r_mcp_global_pause_status.failed) or (r_mcp_global_pause_add_status is defined and not r_mcp_global_pause_add_status.failed)
-
-
-- name: Iterar sobre os saltos de upgrade para {{ cluster_name }}
-  ansible.builtin.include_tasks: _perform_single_hop.yml
-  loop: "{{ upgrade_hops }}"
-  loop_control:
-    loop_var: target_hop_version
-  vars:
-    perform_mcp_pause_unpause_per_hop: false
+- name: "Bloco Principal de Upgrade (com tratamento de falhas)"
   when: upgrade_hops is defined and upgrade_hops | length > 0
-  register: r_hop_results
+  block:
+    - name: "PAUSAR MCP (worker) globalmente em {{ cluster_name }} (usando k8s_patch)"
+      kubernetes.core.k8s_patch:
+        kind: MachineConfigPool
+        api_version: machineconfiguration.openshift.io/v1
+        name: worker
+        definition:
+          spec:
+            paused: true
+      register: r_mcp_global_pause_status
+      when: control_mcps_globally
+      retries: 3
+      delay: 10
 
-- name: "DESPAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s_json_patch"
-  kubernetes.core.k8s_json_patch:
+    - name: "Definir flag _mcps_paused_by_this_job"
+      ansible.builtin.set_fact:
+        _mcps_paused_by_this_job: true
+      when: control_mcps_globally and r_mcp_global_pause_status.changed
+
+    - name: "Aguardar MCP worker ser efetivamente pausado globalmente em {{ cluster_name }}"
+      kubernetes.core.k8s_info:
+        kind: MachineConfigPool
+        api_version: machineconfiguration.openshift.io/v1
+        name: worker
+      register: r_mcp_check_globally_paused
+      until: (r_mcp_check_globally_paused.resources[0].status.conditions | selectattr('type', 'equalto', 'Paused') | first(default={})).status == 'True'
+      retries: 12
+      delay: 30
+      when: _mcps_paused_by_this_job
+
+    - name: Iterar sobre os saltos de upgrade para {{ cluster_name }}
+      ansible.builtin.include_tasks: _perform_single_hop.yml
+      loop: "{{ upgrade_hops }}"
+      loop_control:
+        loop_var: target_hop_version
+      vars:
+        current_target_eus_channel_for_hop: "{{ target_channel_eus }}"
+
+  rescue:
+    - name: "RESCUE: Falha durante a sequência de saltos de upgrade."
+      ansible.builtin.debug:
+        msg: "ERRO na Fase 2 (Upgrade Hops) para o cluster {{ cluster_name }}. Tentando despausar MCPs (se foram pausados por este job)."
+
+    - name: "RESCUE: DESPAUSAR MCP (worker) globalmente em {{ cluster_name }} após falha no upgrade"
+      kubernetes.core.k8s_patch:
+        kind: MachineConfigPool
+        api_version: machineconfiguration.openshift.io/v1
+        name: worker
+        definition:
+          spec:
+            paused: false
+      when: _mcps_paused_by_this_job
+      ignore_errors: true
+
+    - name: "RESCUE: Falhar playbook explicitamente após tentativa de cleanup"
+      ansible.builtin.fail:
+        msg: "Playbook falhou durante a Fase 2 (Upgrade Hops) para o cluster {{ cluster_name }}. Cleanup de MCPs tentado."
+
+- name: "DESPAUSAR MCPs (worker) globalmente em {{ cluster_name }} após todos os upgrades bem sucedidos"
+  kubernetes.core.k8s_patch:
     kind: MachineConfigPool
     api_version: machineconfiguration.openshift.io/v1
     name: worker
-    patch:
-      - op: replace # Assume que o campo /spec/paused existe neste ponto
-        path: /spec/paused
-        value: false
+    definition:
+      spec:
+        paused: false
   register: r_mcp_global_unpause_status
-  retries: 3
-  delay: 10
   when:
     - upgrade_hops is defined
     - upgrade_hops | length > 0
     - control_mcps_globally
+    - _mcps_paused_by_this_job
 
 - name: "Aguardar MCP worker concluir a atualização APÓS despausar globalmente em {{ cluster_name }}"
   kubernetes.core.k8s_info:
@@ -129,6 +126,7 @@
     - upgrade_hops is defined
     - upgrade_hops | length > 0
     - control_mcps_globally
+    - _mcps_paused_by_this_job
     - r_mcp_global_unpause_status is defined and r_mcp_global_unpause_status.changed
   vars:
     ansible_command_timeout: 7200
@@ -141,6 +139,7 @@
     - upgrade_hops is defined
     - upgrade_hops | length > 0
     - control_mcps_globally
+    - _mcps_paused_by_this_job
     - r_mcp_global_unpause_status is defined and r_mcp_global_unpause_status.changed
 
 - name: "Obter versão final do cluster {{ cluster_name }} após todos os saltos"
@@ -163,8 +162,7 @@
       target_aro_version_stat: "{{ target_aro_version }}"
       target_channel_eus_stat: "{{ target_channel_eus }}"
       cluster_name_stat: "{{ cluster_name }}"
+      azure_resource_group_stat: "{{ azure_resource_group }}"
       initial_cluster_version_stat: "{{ _initial_cluster_version_for_summary }}"
       initial_cluster_channel_stat: "{{ _initial_cluster_channel_for_summary }}"
-      original_pdbs_specs_stat: "{{ _original_pdbs_specs_passthrough }}"
-      original_pdbs_metadata_stat: "{{ _original_pdbs_metadata_passthrough }}"
     per_host: false

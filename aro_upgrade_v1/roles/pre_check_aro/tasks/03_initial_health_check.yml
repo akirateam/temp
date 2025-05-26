@@ -52,7 +52,7 @@
         fail_msg: "ClusterVersion está Degraded. Status Degraded ('{{ _cv_status_degraded }}') não é False. Condições completas: {{ r_cv_health.resources[0].status.conditions }}"
         quiet: true
 
-- name: "Health Check: {{ health_check_stage_name }} - Coletar dados dos ClusterOperators"
+- name: "Health Check: {{ health_check_stage_name }} - Verificar ClusterOperators"
   kubernetes.core.k8s_info:
     kind: ClusterOperator
     api_version: config.openshift.io/v1
@@ -76,7 +76,7 @@
     label: "{{ co_item.metadata.name }}"
   when: r_co_health.resources is defined and r_co_health.resources | length > 0
 
-- name: "Health Check: {{ health_check_stage_name }} - Coletar dados dos Nós"
+- name: "Health Check: {{ health_check_stage_name }} - Verificar Nós"
   kubernetes.core.k8s_info:
     kind: Node
     api_version: v1
