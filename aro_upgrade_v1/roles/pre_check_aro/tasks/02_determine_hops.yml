@@ -75,4 +75,30 @@
             fail_msg: >
               Após filtrar os saltos estáticos que já foram ultrapassados, o último salto restante
               ({{ calculated_upgrade_hops[-1] }}) não corresponde à 'target_aro_version' ({{ target_aro_version }}).
-              Isso pode significar que a current_cluster_version ({{ current_cluster_version }}) já é igual ou superior ao target_aro
+              Isso pode significar que a current_cluster_version ({{ current_cluster_version }}) já é igual ou superior ao target_aro_version
+              OU que a lista de saltos explícitos não estava correta para a versão atual.
+              Saltos calculados restantes: {{ calculated_upgrade_hops }}.
+            quiet: true
+
+  when: "current_cluster_version is version(target_aro_version, '<')"
+
+- name: "Falhar se nenhum caminho estático foi aplicável e o upgrade ainda é necessário"
+  ansible.builtin.fail:
+    msg: >
+      Nenhum caminho de upgrade estático foi encontrado para o alvo {{ target_aro_version }} (canal {{ target_channel_eus }})
+      a partir da versão atual {{ current_cluster_version }} (canal {{ initial_cluster_channel | default('N/A') }}) no cluster {{ cluster_name }}.
+      Este playbook atualmente suporta caminhos estáticos para 4.16.40 (de 4.14.xx) e 4.18.13 (de 4.16.xx).
+  when:
+    - "current_cluster_version is version(target_aro_version, '<')"
+    - not (calculated_upgrade_hops | length > 0)
+
+- name: "Definir saltos vazios se já estiver no alvo ou além (garantia final)"
+  ansible.builtin.set_fact:
+    calculated_upgrade_hops: []
+    control_mcps_globally: false
+  when: "current_cluster_version is version(target_aro_version, '>=')"
+
+- name: "Exibir saltos de upgrade EUS finais para {{ cluster_name }}"
+  ansible.builtin.debug:
+    msg: "Cluster {{ cluster_name }}: Saltos de upgrade calculados: {{ calculated_upgrade_hops }}. Controle Global de MCPs: {{ control_mcps_globally }}"
+  when: calculated_upgrade_hops is defined
