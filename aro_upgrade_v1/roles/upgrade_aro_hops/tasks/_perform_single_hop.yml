@@ -1,49 +1,120 @@
 ---
-- name: "Obter versão atual do cluster {{ cluster_name }} antes do salto para {{ target_hop_version }}"
+- name: "Obter dados completos do ClusterVersion antes do salto para {{ target_hop_version }}"
   kubernetes.core.k8s_info:
     kind: ClusterVersion
     api_version: config.openshift.io/v1
     name: version
-  register: r_cluster_version_current_hop_pre
+  register: r_cv_state_before_hop
   retries: 3
   delay: 10
 
-- name: Definir current_version_before_hop
+- name: Definir fatos para o salto atual
   ansible.builtin.set_fact:
-    current_version_before_hop: "{{ r_cluster_version_current_hop_pre.resources[0].status.desired.version }}"
+    current_version_before_hop: "{{ r_cv_state_before_hop.resources[0].status.desired.version }}"
+    current_acknowledged_versions: "{{ r_cv_state_before_hop.resources[0].spec.acknowledgedVersions | default([]) }}"
+    target_hop_image: >-
+      {{ ((r_cv_state_before_hop.resources[0].status.availableUpdates |
+          selectattr('version', 'equalto', target_hop_version) |
+          map(attribute='image') |
+          first) |
+         default('') or
+         (r_cv_state_before_hop.resources[0].status.conditionalUpdates |
+          selectattr('release.version', 'equalto', target_hop_version) |
+          map(attribute='release.image') |
+          first) |
+         default('')) }}
+    target_hop_eus_channel: "eus-{{ target_hop_version.split('.')[0] }}.{{ target_hop_version.split('.')[1] }}"
+
+- name: "Debug: Informações do salto para {{ target_hop_version }}"
+  ansible.builtin.debug:
+    msg:
+      - "Cluster: {{ cluster_name }}"
+      - "Versão Atual: {{ current_version_before_hop }}"
+      - "Salto Alvo: {{ target_hop_version }}"
+      - "Canal EUS Alvo para este salto: {{ target_hop_eus_channel }}"
+      - "Imagem Alvo Encontrada: {{ target_hop_image if target_hop_image else 'Não encontrada, CVO tentará resolver' }}"
+      - "Versões já com Acknowledge: {{ current_acknowledged_versions }}"
 
 - name: "INICIANDO Salto de Upgrade para: {{ target_hop_version }} em {{ cluster_name }}"
   ansible.builtin.debug:
     msg: "Cluster: {{ cluster_name }}. Iniciando processo de upgrade de {{ current_version_before_hop }} para {{ target_hop_version }}"
 
 - name: "Health Check (Comum): Pré-Salto para {{ target_hop_version }} em {{ cluster_name }}"
-  include_tasks: _common_health_check.yml
+  ansible.builtin.include_tasks: _common_health_check.yml
   vars:
     health_check_stage_name: "Cluster {{ cluster_name }} - Pré-Salto para {{ target_hop_version }}"
 
-- name: Determinar canal EUS para o salto alvo ({{ target_hop_version }})
-  ansible.builtin.set_fact:
-    target_hop_eus_channel: "eus-{{ target_hop_version.split('.')[0] }}.{{ target_hop_version.split('.')[1] }}"
+- name: "Aplicar Acknowledge para {{ target_hop_version }} se ainda não estiver presente"
+  kubernetes.core.k8s_json_patch:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+    patch:
+      - op: add
+        path: "/spec/acknowledgedVersions/-"
+        value: "{{ target_hop_version }}"
+  when: target_hop_version not in current_acknowledged_versions
+  register: r_ack_patch_add
+  ignore_errors: true
 
-- name: "Iniciar upgrade para {{ target_hop_version }} no canal {{ target_hop_eus_channel }} em {{ cluster_name }}"
-  ansible.builtin.command: >
-    oc adm upgrade --to={{ target_hop_version }}
-    --allow-explicit-upgrade
-    --allow-upgrade-with-warnings
-    --force=false
-    --acknowledge-critical-updates=true
-    --channel={{ target_hop_eus_channel }}
-  register: r_upgrade_command
-  changed_when: >
-    r_upgrade_command.rc == 0 and
-    ('Update to {{ target_hop_version }} is already in progress' not in r_upgrade_command.stdout_lines | join(' ')) and
-    ('Update to {{ target_hop_version }} is already recommended' not in r_upgrade_command.stdout_lines | join(' ')) and
-    ('Update to {{ target_hop_version }} already completed' not in r_upgrade_command.stdout_lines | join(' '))
-  failed_when: >
-    r_upgrade_command.rc != 0 and
-    ('already recommended' not in r_upgrade_command.stdout_lines | join(' ')) and
-    ('already in progress' not in r_upgrade_command.stdout_lines | join(' ')) and
-    ('already completed' not in r_upgrade_command.stdout_lines | join(' '))
+- name: "Aplicar Acknowledge para {{ target_hop_version }} (criar /spec/acknowledgedVersions se necessário)"
+  kubernetes.core.k8s_json_patch:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+    patch:
+      - op: add
+        path: "/spec/acknowledgedVersions"
+        value: ["{{ target_hop_version }}"]
+  when:
+    - target_hop_version not in current_acknowledged_versions
+    - r_ack_patch_add is defined and r_ack_patch_add.failed
+  register: r_ack_patch_create_list
+
+- name: "Construir JSON Patch para iniciar o upgrade para {{ target_hop_version }}"
+  ansible.builtin.set_fact:
+    upgrade_json_patch_payload: |
+      [
+        {"op": "replace", "path": "/spec/channel", "value": "{{ target_hop_eus_channel }}"},
+        {"op": "replace", "path": "/spec/desiredUpdate/version", "value": "{{ target_hop_version }}"}
+        {% if target_hop_image %}
+        ,{"op": "replace", "path": "/spec/desiredUpdate/image", "value": "{{ target_hop_image }}"}
+        {% else %}
+        {# Se não há imagem, podemos tentar remover o campo se ele existir, ou apenas não incluí-lo. #}
+        {# Omitir é mais seguro. Se a API espera, ela reclamará. #}
+        {% endif %}
+        {# A CVO pode precisar que desiredUpdate seja setado como um todo. #}
+        {# Se o desiredUpdate não existir, 'replace' falhará. 'add' seria melhor. #}
+        {# Vamos tentar uma abordagem mais robusta para desiredUpdate #}
+      ]
+
+- name: "Refatorar: Construir JSON Patch para desiredUpdate de forma mais robusta"
+  ansible.builtin.set_fact:
+    _desired_update_payload: {
+      "version": "{{ target_hop_version }}"
+    }
+- when: target_hop_image | length > 0
+  ansible.builtin.set_fact:
+    _desired_update_payload: "{{ _desired_update_payload | combine({'image': target_hop_image}) }}"
+
+- name: "Refatorar: JSON Patch final para o upgrade"
+  ansible.builtin.set_fact:
+    upgrade_json_patch_payload_final:
+      - op: add
+        path: /spec/desiredUpdate
+        value: "{{ _desired_update_payload }}"
+      - op: replace
+        path: /spec/channel
+        value: "{{ target_hop_eus_channel }}"
+
+- name: "Iniciar/Configurar upgrade para {{ target_hop_version }} em {{ cluster_name }} via JSON patch"
+  kubernetes.core.k8s_json_patch:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+    patch: "{{ upgrade_json_patch_payload_final }}"
+  register: r_json_patch_cv_for_upgrade
+  changed_when: r_json_patch_cv_for_upgrade.changed
 
 - name: "Monitorar Progresso do Upgrade para {{ target_hop_version }} (CVO) em {{ cluster_name }}"
   kubernetes.core.k8s_info:
@@ -54,21 +125,22 @@
   until: >
     r_cv_status_hop.resources is defined and
     r_cv_status_hop.resources | length > 0 and
-    r_cv_status_hop.resources[0].status.desired.version == target_hop_version and
-    (r_cv_status_hop.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | first).status == 'True' and
-    (r_cv_status_hop.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | first).status == 'False' and
-    (r_cv_status_hop.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | first).status == 'False'
+    r_cv_status_hop.resources[0].status is defined and
+    r_cv_status_hop.resources[0].status.conditions is defined and
+    (((r_cv_status_hop.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | list) or [{'status': 'False'}]) | first).status == 'True' and
+    (((r_cv_status_hop.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | list) or [{'status': 'True'}]) | first).status == 'False' and
+    (((r_cv_status_hop.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | list) or [{'status': 'False'}]) | first).status == 'False'
   retries: 360
   delay: 60
   vars:
     ansible_command_timeout: 7200
 
 - name: "Health Check (Comum): Pós-Salto para {{ target_hop_version }} (CVO Concluído) em {{ cluster_name }}"
-  include_tasks: _common_health_check.yml
+  ansible.builtin.include_tasks: _common_health_check.yml
   vars:
     health_check_stage_name: "Cluster {{ cluster_name }} - Pós-Salto {{ target_hop_version }} (CVO Concluído)"
 
-- name: "Verificar status do MCP worker (enquanto pausado) após CVO para {{ target_hop_version }}"
+- name: "Verificar status do MCP worker (enquanto pausado globalmente) após CVO para {{ target_hop_version }}"
   kubernetes.core.k8s_info:
     kind: MachineConfigPool
     api_version: machineconfiguration.openshift.io/v1
@@ -79,25 +151,27 @@
 - name: "Debug: Status do MCP worker (pausado) para {{ target_hop_version }} em {{ cluster_name }}"
   ansible.builtin.debug:
     var: r_mcp_status_while_paused.resources[0].status
-  when: control_mcps_globally and r_mcp_status_while_paused.resources is defined
+  when:
+    - control_mcps_globally
+    - r_mcp_status_while_paused.resources is defined and r_mcp_status_while_paused.resources | length > 0
 
-- name: "Sumário do Salto {{ target_hop_version }} para {{ cluster_name }}"
+- name: "Sumário do Salto {{ target_hop_version }} para {{ cluster_name }} (MCPs controlados globalmente)"
   ansible.builtin.debug:
     msg:
       - "Cluster: {{ cluster_name }}"
       - "Salto de upgrade para {{ target_hop_version }} concluído (CVO)."
       - "Versão anterior ao salto: {{ current_version_before_hop }}"
-      - "Versão atual após salto (CVO): {{ r_cv_status_hop.resources[0].status.desired.version }}"
-      - "MCPs dos workers permanecem pausados até o final de todos os saltos."
+      - "Versão atual após salto (CVO): {{ r_cv_status_hop.resources[0].status.desired.version if r_cv_status_hop.resources is defined and r_cv_status_hop.resources | length > 0 else 'N/A' }}"
+      - "MCPs dos workers permanecem pausados até o final de todos os saltos (se aplicável)."
       - "Status: OK (CVO)"
   when: control_mcps_globally
 
-- name: "Sumário do Salto {{ target_hop_version }} para {{ cluster_name }} (sem controle global de MCP)"
+- name: "Sumário do Salto {{ target_hop_version }} para {{ cluster_name }} (MCPs não controlados globalmente)"
   ansible.builtin.debug:
     msg:
       - "Cluster: {{ cluster_name }}"
       - "Salto de upgrade para {{ target_hop_version }} concluído (CVO)."
       - "Versão anterior ao salto: {{ current_version_before_hop }}"
-      - "Versão atual após salto (CVO): {{ r_cv_status_hop.resources[0].status.desired.version }}"
+      - "Versão atual após salto (CVO): {{ r_cv_status_hop.resources[0].status.desired.version if r_cv_status_hop.resources is defined and r_cv_status_hop.resources | length > 0 else 'N/A' }}"
       - "Status: OK (CVO)"
   when: not control_mcps_globally
