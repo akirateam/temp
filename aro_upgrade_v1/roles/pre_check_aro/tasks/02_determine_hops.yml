@@ -37,18 +37,34 @@
           Verifique as condições e os caminhos estáticos definidos.
       when: target_aro_version in ["4.16.40", "4.18.13"]
 
-    - name: "Ajustar saltos estáticos: remover saltos <= current_cluster_version"
+    # Bloco de ajuste/filtragem dos saltos definidos estaticamente usando loop manual
+    - name: "Ajustar saltos estáticos: remover saltos <= {{ current_cluster_version }} (cluster: {{ cluster_name }})"
       when: calculated_upgrade_hops | length > 0
       block:
-        - name: "Filtrar saltos estáticos que já são <= current_cluster_version"
-          ansible.builtin.set_fact:
-            _temp_hops_filtered: "{{ calculated_upgrade_hops | select('version', '>', current_cluster_version) | list }}"
+        - name: "Debug: Saltos ANTES da filtragem manual"
+          ansible.builtin.debug:
+            var: calculated_upgrade_hops
+            verbosity: 1
 
-        - name: "Atualizar calculated_upgrade_hops com os saltos filtrados"
+        - name: "Inicializar lista temporária para saltos filtrados manualmente"
           ansible.builtin.set_fact:
-            calculated_upgrade_hops: "{{ _temp_hops_filtered }}"
+            _manually_filtered_hops: []
 
-        - name: "Debug: Saltos estáticos após filtro inicial"
+        - name: "Filtrar manualmente saltos que são <= current_cluster_version"
+          ansible.builtin.set_fact:
+            # Adiciona o hop_item à lista se ele for > current_cluster_version
+            _manually_filtered_hops: "{{ _manually_filtered_hops + [hop_item] }}"
+          loop: "{{ calculated_upgrade_hops }}"
+          loop_control:
+            loop_var: hop_item # Usar um loop_var específico
+          # Condição: hop_item > current_cluster_version
+          when: hop_item is version(current_cluster_version, '>')
+
+        - name: "Atualizar calculated_upgrade_hops com a lista filtrada manualmente"
+          ansible.builtin.set_fact:
+            calculated_upgrade_hops: "{{ _manually_filtered_hops }}"
+
+        - name: "Debug: Saltos estáticos APÓS filtragem manual"
           ansible.builtin.debug:
             var: calculated_upgrade_hops
             verbosity: 1
@@ -64,6 +80,7 @@
               Isso pode significar que a current_cluster_version ({{ current_cluster_version }}) já é igual ou superior ao target_aro_version
               OU que a lista de saltos explícitos não estava correta para a versão atual.
               Saltos calculados restantes: {{ calculated_upgrade_hops }}.
+
   when: "current_cluster_version is version(target_aro_version, '<')"
 
 - name: "Falhar se nenhum caminho estático foi aplicável e o upgrade ainda é necessário"
@@ -74,7 +91,7 @@
       Este playbook atualmente suporta caminhos estáticos para 4.16.40 (de 4.14.xx) e 4.18.13 (de 4.16.xx).
   when:
     - "current_cluster_version is version(target_aro_version, '<')"
-    - not (calculated_upgrade_hops | length > 0)
+    - not (calculated_upgrade_hops | length > 0) # Se nenhum salto foi definido pelos blocos 'when' acima
 
 - name: "Definir saltos vazios se já estiver no alvo ou além (garantia final)"
   ansible.builtin.set_fact:
