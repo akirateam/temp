@@ -17,30 +17,26 @@
     api_version: policy/v1
     name: "{{ pdb_item.metadata.name }}"
     namespace: "{{ pdb_item.metadata.namespace }}"
-    patch: >-
-      {% set patch_operations = [] %}
+    patch: |
+      {% set patch_ops = [] %}
       {% if pdb_item.spec.minAvailable is defined and pdb_item.spec.minAvailable is not none %}
-      {%   set patch_operations = patch_operations + [{"op": "replace", "path": "/spec/minAvailable", "value": 0 }] %}
-      {# Se minAvailable existe, também removemos maxUnavailable para evitar conflitos, caso exista #}
-      {%   if pdb_item.spec.maxUnavailable is defined %}
-      {%     set patch_operations = patch_operations + [{"op": "remove", "path": "/spec/maxUnavailable" }] %}
+      {%   set _ = patch_ops.append({"op": "replace", "path": "/spec/minAvailable", "value": 0 }) %}
+      {%   if pdb_item.spec.maxUnavailable is defined and pdb_item.spec.maxUnavailable is not none %}
+      {%     set _ = patch_ops.append({"op": "remove", "path": "/spec/maxUnavailable" }) %}
       {%   endif %}
       {% elif pdb_item.spec.maxUnavailable is defined and pdb_item.spec.maxUnavailable is not none %}
-      {%   set patch_operations = patch_operations + [{"op": "replace", "path": "/spec/maxUnavailable", "value": "100%" }] %}
-      {# Se maxUnavailable existe, também removemos minAvailable para evitar conflitos, caso exista #}
-      {%   if pdb_item.spec.minAvailable is defined %}
-      {%     set patch_operations = patch_operations + [{"op": "remove", "path": "/spec/minAvailable" }] %}
+      {%   set _ = patch_ops.append({"op": "replace", "path": "/spec/maxUnavailable", "value": "100%" }) %}
+      {%   if pdb_item.spec.minAvailable is defined and pdb_item.spec.minAvailable is not none %}
+      {%     set _ = patch_ops.append({"op": "remove", "path": "/spec/minAvailable" }) %}
       {%   endif %}
       {% else %}
-      {# Se nenhum dos dois está definido, adicionamos minAvailable: 0 #}
-      {# Primeiro verificamos se spec existe, se não, adicionamos spec e depois minAvailable #}
       {%   if pdb_item.spec is not defined or pdb_item.spec is none %}
-      {%     set patch_operations = patch_operations + [{"op": "add", "path": "/spec", "value": { "minAvailable": 0 } }] %}
+      {%     set _ = patch_ops.append({"op": "add", "path": "/spec", "value": { "minAvailable": 0 } }) %}
       {%   else %}
-      {%     set patch_operations = patch_operations + [{"op": "add", "path": "/spec/minAvailable", "value": 0 }] %}
+      {%     set _ = patch_ops.append({"op": "add", "path": "/spec/minAvailable", "value": 0 }) %}
       {%   endif %}
       {% endif %}
-      {{ patch_operations }}
+      {{ patch_ops | to_json }}
   loop: "{{ r_pdbs_original_state.resources }}"
   loop_control:
     loop_var: pdb_item
