@@ -1,61 +1,28 @@
 ---
-- name: "Health Check: {{ health_check_stage_name }} - Loop de verificação do ClusterVersion"
-  block:
-    - name: "Health Check: {{ health_check_stage_name }} - Coletar dados do ClusterVersion"
-      kubernetes.core.k8s_info:
-        kind: ClusterVersion
-        api_version: config.openshift.io/v1
-        name: version
-      register: r_cv_health_final
-
-    - name: "Health Check: {{ health_check_stage_name }} - Avaliar condição 'Available'"
-      ansible.builtin.set_fact:
-        _cv_available_check_final: >-
-          {% set _list = r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | list %}
-          {% if _list | length > 0 %}{{ _list[0].status == 'True' }}{% else %}{{ False }}{% endif %}
-      when: >
-        r_cv_health_final.resources is defined and
-        r_cv_health_final.resources | length > 0 and
-        r_cv_health_final.resources[0].status is defined and
-        r_cv_health_final.resources[0].status.conditions is defined
-
-    - name: "Health Check: {{ health_check_stage_name }} - Avaliar condição 'Progressing'"
-      ansible.builtin.set_fact:
-        _cv_progressing_check_final: >-
-          {% set _list = r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | list %}
-          {% if _list | length > 0 %}{{ _list[0].status == 'False' }}{% else %}{{ False }}{% endif %}
-      when: >
-        r_cv_health_final.resources is defined and
-        r_cv_health_final.resources | length > 0 and
-        r_cv_health_final.resources[0].status is defined and
-        r_cv_health_final.resources[0].status.conditions is defined
-
-    - name: "Health Check: {{ health_check_stage_name }} - Avaliar condição 'Degraded'"
-      ansible.builtin.set_fact:
-        _cv_degraded_check_final: >-
-          {% set _list = r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | list %}
-          {% if _list | length > 0 %}{{ _list[0].status == 'False' }}{% else %}{{ True }}{% endif %}
-      when: >
-        r_cv_health_final.resources is defined and
-        r_cv_health_final.resources | length > 0 and
-        r_cv_health_final.resources[0].status is defined and
-        r_cv_health_final.resources[0].status.conditions is defined
-
-    - name: "Health Check: {{ health_check_stage_name }} - Definir status final da checagem do ClusterVersion"
-      ansible.builtin.set_fact:
-        _cv_health_passed_final: >-
-          {{ (r_cv_health_final.resources is defined and
-              r_cv_health_final.resources | length > 0 and
-              r_cv_health_final.resources[0].status is defined and
-              r_cv_health_final.resources[0].status.conditions is defined and
-              (_cv_available_check_final | default(false) | bool) and
-              (_cv_progressing_check_final | default(false) | bool) and
-              (_cv_degraded_check_final | default(false) | bool) )
-          }}
-
+- name: "Health Check: {{ health_check_stage_name }} - Verificar ClusterVersion"
+  kubernetes.core.k8s_info:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+  register: r_cv_health_final
   retries: 5
   delay: 15
-  until: _cv_health_passed_final | default(false) | bool
+  vars:
+    _conditions_present: >-
+      {{ r_cv_health_final.resources is defined and
+         r_cv_health_final.resources | length > 0 and
+         r_cv_health_final.resources[0].status is defined and
+         r_cv_health_final.resources[0].status.conditions is defined }}
+    _available_check: >-
+      {{ _conditions_present and
+         (((r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | list) or [{'status': 'False'}]) | first).status == 'True' }}
+    _progressing_check: >-
+      {{ _conditions_present and
+         (((r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | list) or [{'status': 'True'}]) | first).status == 'False' }}
+    _degraded_check: >-
+      {{ _conditions_present and
+         (((r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | list) or [{'status': 'True'}]) | first).status == 'False' }}
+  until: _conditions_present and (_available_check | bool) and (_progressing_check | bool) and (_degraded_check | bool)
 
 - name: "Health Check: {{ health_check_stage_name }} - Verificar ClusterOperators"
   kubernetes.core.k8s_info:
