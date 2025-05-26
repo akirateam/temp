@@ -1,0 +1,12 @@
+{
+  "spec": {
+    {% if current_pdb_spec.minAvailable is defined and current_pdb_spec.minAvailable is not none %}
+    "minAvailable": 0
+    {% elif current_pdb_spec.maxUnavailable is defined and current_pdb_spec.maxUnavailable is not none %}
+    "maxUnavailable": "100%"
+    {% else %}
+    {# Se PDB não tem minAvailable nem maxUnavailable definidos, para garantir, setamos minAvailable: 0 #}
+    "minAvailable": 0
+    {% endif %}
+  }
+}
