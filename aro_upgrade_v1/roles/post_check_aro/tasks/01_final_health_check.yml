@@ -12,9 +12,18 @@
     r_cv_health_final.resources | length > 0 and
     r_cv_health_final.resources[0].status is defined and
     r_cv_health_final.resources[0].status.conditions is defined and
-    (((r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | list) or [{'status': 'False'}]) | first).status == 'True' and
-    (((r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | list) or [{'status': 'True'}]) | first).status == 'False' and
-    (((r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | list) or [{'status': 'True'}]) | first).status == 'False'
+    (
+      {% set _avail_list = r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | list %}
+      {% if _avail_list | length > 0 %}{{ _avail_list[0].status == 'True' }}{% else %}{{ False }}{% endif %}
+    ) and
+    (
+      {% set _prog_list = r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | list %}
+      {% if _prog_list | length > 0 %}{{ _prog_list[0].status == 'False' }}{% else %}{{ False }}{% endif %}
+    ) and
+    (
+      {% set _degraded_list = r_cv_health_final.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | list %}
+      {% if _degraded_list | length > 0 %}{{ _degraded_list[0].status == 'False' }}{% else %}{{ True }}{% endif %}
+    )
 
 - name: "Health Check: {{ health_check_stage_name }} - Verificar ClusterOperators"
   kubernetes.core.k8s_info:
