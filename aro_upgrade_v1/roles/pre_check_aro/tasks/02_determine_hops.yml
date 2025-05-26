@@ -1,89 +1,92 @@
 ---
-- name: Inicializar variáveis para descoberta de saltos em {{ cluster_name }}
+- name: "Inicializar variáveis para determinação de saltos em {{ cluster_name }}"
   ansible.builtin.set_fact:
     calculated_upgrade_hops: []
-    simulated_current_version: "{{ current_cluster_version }}"
-    simulated_current_eus_channel: "{{ initial_cluster_channel }}"
-    iteration_count_actual: 0 # Renomeado para evitar conflito com loop.index implícito
-    _keep_discovering_hops: true # Flag para controlar a execução da lógica interna do include
+    control_mcps_globally: false
 
-- name: "Coletar 'availableUpdates' do cluster {{ cluster_name }} (uma vez para o planejamento)"
-  kubernetes.core.k8s_info:
-    kind: ClusterVersion
-    api_version: config.openshift.io/v1
-    name: version
-  register: r_cv_live_state
-  when: "current_cluster_version is version(target_aro_version, '<')"
-
-- name: Validar que availableUpdates foi obtido (se o upgrade é necessário)
-  ansible.builtin.assert:
-    that:
-      - r_cv_live_state.resources is defined
-      - r_cv_live_state.resources | length > 0
-      - r_cv_live_state.resources[0].status.availableUpdates is defined
-    fail_msg: "Não foi possível obter 'availableUpdates' do ClusterVersion para determinar os saltos."
-    quiet: true
-  when: "current_cluster_version is version(target_aro_version, '<')"
-
-# Loop que inclui a lógica de descoberta de um único salto.
-# O loop em si roda 'max_hop_discovery_iterations' vezes.
-# A lógica DENTRO do _iterate_hop_discovery_step.yml decide se algo ainda precisa ser feito.
-- name: "Loop principal para determinar saltos de upgrade EUS para {{ cluster_name }}"
-  ansible.builtin.include_tasks: _iterate_hop_discovery_step.yml
+- name: "Determinar saltos para alvo {{ target_aro_version }} (Canal: {{ target_channel_eus }})"
   vars:
-    # Passar os updates coletados para a tarefa incluída
-    live_available_updates_param: "{{ r_cv_live_state.resources[0].status.availableUpdates | default([]) }}"
-    # Passar o índice do loop para que o include possa usá-lo se necessário (para debug ou lógica)
-    # Embora 'iteration_count_actual' seja o contador principal que estamos gerenciando.
-    # current_loop_iteration: "{{ ansible_loop.index }}" # ansible_loop.index é 1-based
-  loop: "{{ range(max_hop_discovery_iterations | int) | list }}"
-  # A condição 'when' aqui controla se o include_tasks é chamado.
-  # A flag _keep_discovering_hops é crucial e será atualizada pelo _iterate_hop_discovery_step.yml
-  when:
-    - current_cluster_version is version(target_aro_version, '<') # Só executa se upgrade é necessário
-    - _keep_discovering_hops # Continuar apenas se a flag permitir
-
-# ----- INÍCIO DA TAREFA DE AJUSTE/FILTRO DE SEGURANÇA (após o loop) -----
-- name: "Ajustar lista de saltos {{ cluster_name }}: garantir que todos os saltos são > {{ current_cluster_version }}"
-  ansible.builtin.set_fact:
-    calculated_upgrade_hops: "{{ calculated_upgrade_hops | select('version', '>', current_cluster_version) | list }}"
-  when:
-    - calculated_upgrade_hops is defined
-    - calculated_upgrade_hops | length > 0
-    - current_cluster_version is defined
-    - "current_cluster_version is version(target_aro_version, '<')"
-
-- name: "Debug: Lista de saltos após ajuste final (se houver)"
-  ansible.builtin.debug:
-    var: calculated_upgrade_hops
-  when:
-    - calculated_upgrade_hops is defined
-    - "current_cluster_version is version(target_aro_version, '<')"
-# ----- FIM DA TAREFA DE AJUSTE/FILTRO DE SEGURANÇA -----
-
-- name: "Verificar se o caminho completo até o alvo foi encontrado para {{ cluster_name }}"
-  when:
-    - "current_cluster_version is version(target_aro_version, '<')" # Se um upgrade era necessário
-    # A condição de parada do loop (_keep_discovering_hops=false) ocorre quando:
-    # 1. simulated_current_version >= target_aro_version
-    # 2. Nenhum hop foi encontrado na última iteração que tentou rodar
-    # 3. iteration_count_actual >= max_hop_discovery_iterations
-    # Então, se _keep_discovering_hops é false E simulated_current_version < target_aro_version, é uma falha.
-    - not _keep_discovering_hops # Se o loop parou por uma razão que não seja atingir o máximo de iterações
-    - simulated_current_version is version(target_aro_version, '<') # E ainda não chegamos ao alvo
+    current_major_minor: "{{ current_cluster_version.split('.')[0] }}.{{ current_cluster_version.split('.')[1] }}"
   block:
-    - ansible.builtin.debug:
-        msg: >
-          AVISO para {{ cluster_name }}: Não foi possível determinar um caminho de upgrade EUS completo até {{ target_aro_version }}
-          (canal {{ target_channel_eus }}) a partir de {{ current_cluster_version }} (canal {{ initial_cluster_channel }}).
-          Saltos encontrados: {{ calculated_upgrade_hops }}.
-          Última versão simulada: {{ simulated_current_version }}.
-          Iterações realizadas: {{ iteration_count_actual }}.
-          Verifique os 'availableUpdates' do ClusterVersion e a lógica de seleção de saltos EUS.
-    - ansible.builtin.fail:
-        msg: "Falha ao determinar caminho de upgrade EUS completo para {{ target_aro_version }} no cluster {{ cluster_name }}."
+    - name: "Definir caminho de upgrade para {{ target_aro_version }}"
+      ansible.builtin.set_fact:
+        calculated_upgrade_hops: ["4.15.44", "4.16.40"]
+        control_mcps_globally: true
+      when:
+        - target_aro_version == "4.16.40"
+        - target_channel_eus == "eus-4.16"
+        - current_major_minor == "4.14"
 
-- name: "Exibir saltos de upgrade EUS determinados para {{ cluster_name }}"
+    - name: "Definir caminho de upgrade para {{ target_aro_version }}"
+      ansible.builtin.set_fact:
+        calculated_upgrade_hops: ["4.17.29", "4.18.13"]
+        control_mcps_globally: true
+      when:
+        - target_aro_version == "4.18.13"
+        - target_channel_eus == "eus-4.18"
+        - current_major_minor == "4.16"
+
+    - name: "Verificar se um caminho de upgrade estático foi definido para {{ target_aro_version }}"
+      ansible.builtin.assert:
+        that:
+          - calculated_upgrade_hops | length > 0
+        fail_msg: >
+          Nenhum caminho de upgrade estático definido para a combinação de:
+          Versão Alvo: {{ target_aro_version }}, Canal Alvo: {{ target_channel_eus }},
+          e Versão Corrente Major.Minor: {{ current_major_minor }}.
+          Verifique as condições e os caminhos estáticos definidos.
+      when: control_mcps_globally
+
+    - name: "Ajustar saltos se a versão atual já ultrapassou algum intermediário"
+      when: calculated_upgrade_hops | length > 0
+      block:
+        - name: "Filtrar saltos que já são <= current_cluster_version"
+          ansible.builtin.set_fact:
+            _temp_hops_filtered: "{{ calculated_upgrade_hops | select('version', '>', current_cluster_version) | list }}"
+
+        - name: "Atualizar calculated_upgrade_hops com os saltos filtrados"
+          ansible.builtin.set_fact:
+            calculated_upgrade_hops: "{{ _temp_hops_filtered }}"
+
+        - name: "Debug: Saltos após filtro inicial"
+          ansible.builtin.debug:
+            var: calculated_upgrade_hops
+            verbosity: 1
+
+        - name: "Verificar se, após filtragem, o último salto ainda é o alvo (se houver saltos restantes)"
+          when: calculated_upgrade_hops | length > 0
+          ansible.builtin.assert:
+            that:
+              - (target_aro_version in calculated_upgrade_hops and calculated_upgrade_hops[-1] == target_aro_version) or \
+                (target_aro_version not in calculated_upgrade_hops and current_cluster_version is version(target_aro_version, '>='))
+            fail_msg: >
+              Após filtrar os saltos que já foram ultrapassados, o último salto restante
+              ({{ calculated_upgrade_hops[-1] if calculated_upgrade_hops | length > 0 else 'NENHUM' }})
+              não corresponde à 'target_aro_version' ({{ target_aro_version }}),
+              ou o alvo foi removido indevidamente.
+              Saltos calculados: {{ calculated_upgrade_hops }}. Versão Atual: {{ current_cluster_version }}.
+
+        - name: "Garantir que o target_aro_version é o último salto se ainda não foi alcançado e está na lista"
+          when: calculated_upgrade_hops | length > 0 and calculated_upgrade_hops[-1] != target_aro_version and target_aro_version in calculated_upgrade_hops
+          ansible.builtin.set_fact:
+            calculated_upgrade_hops: "{{ (calculated_upgrade_hops | reject('equalto', target_aro_version) | list) + [target_aro_version] }}"
+  when: "current_cluster_version is version(target_aro_version, '<')"
+
+- name: "Definir saltos vazios se já estiver no alvo ou além"
+  ansible.builtin.set_fact:
+    calculated_upgrade_hops: []
+    control_mcps_globally: false
+  when: "current_cluster_version is version(target_aro_version, '>=')"
+
+
+- name: "Exibir saltos de upgrade EUS finais para {{ cluster_name }}"
   ansible.builtin.debug:
-    var: calculated_upgrade_hops
-  when: calculated_upgrade_hops is defined and calculated_upgrade_hops | length > 0
+    msg: "Cluster {{ cluster_name }}: Saltos de upgrade calculados: {{ calculated_upgrade_hops }}. Controle Global de MCPs: {{ control_mcps_globally }}"
+  when: calculated_upgrade_hops is defined
+
+- name: "Falhar se nenhum salto foi determinado e o upgrade é necessário"
+  ansible.builtin.fail:
+    msg: "Nenhum salto de upgrade foi determinado para {{ target_aro_version }} a partir de {{ current_cluster_version }} para o cluster {{ cluster_name }}. Verifique os critérios de target_aro_version e current_major_minor."
+  when:
+    - "current_cluster_version is version(target_aro_version, '<')"
+    - calculated_upgrade_hops is not defined or calculated_upgrade_hops | length == 0

@@ -68,38 +68,36 @@
   vars:
     health_check_stage_name: "Cluster {{ cluster_name }} - Pós-Salto {{ target_hop_version }} (CVO Concluído)"
 
-- name: "Aguardar MCPs ({{ mcp_to_manage | default(['worker']) | join(', ') }}) concluírem a atualização para {{ target_hop_version }} em {{ cluster_name }}"
+- name: "Verificar status do MCP worker (enquanto pausado) após CVO para {{ target_hop_version }}"
   kubernetes.core.k8s_info:
     kind: MachineConfigPool
     api_version: machineconfiguration.openshift.io/v1
-    name: "{{ item_mcp }}"
-  register: r_mcp_status_single_hop
-  until: >
-    r_mcp_status_single_hop.resources is defined and
-    r_mcp_status_single_hop.resources | length > 0 and
-    r_mcp_status_single_hop.resources[0].status.updatedMachineCount == r_mcp_status_single_hop.resources[0].status.machineCount and
-    (r_mcp_status_single_hop.resources[0].status.conditions | selectattr('type', 'equalto', 'Updating') | first).status == 'False' and
-    (r_mcp_status_single_hop.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | first).status == 'False'
-    {# Não nos importamos com o status 'Paused' aqui, pois eles foram pausados externamente #}
-  retries: 240
-  delay: 60
-  loop: "{{ mcp_to_manage | default(['worker']) }}"
-  loop_control:
-    loop_var: item_mcp
-    label: "mcp-wait-update-{{ item_mcp }}"
-  vars:
-    ansible_command_timeout: 7200
+    name: worker
+  register: r_mcp_status_while_paused
+  when: control_mcps_globally
 
-- name: "Health Check (Comum): Pós-Salto para {{ target_hop_version }} (MCPs Concluídos) em {{ cluster_name }}"
-  include_tasks: _common_health_check.yml
-  vars:
-    health_check_stage_name: "Cluster {{ cluster_name }} - Pós-Salto {{ target_hop_version }} (MCPs Concluídos)"
+- name: "Debug: Status do MCP worker (pausado) para {{ target_hop_version }} em {{ cluster_name }}"
+  ansible.builtin.debug:
+    var: r_mcp_status_while_paused.resources[0].status
+  when: control_mcps_globally and r_mcp_status_while_paused.resources is defined
 
 - name: "Sumário do Salto {{ target_hop_version }} para {{ cluster_name }}"
   ansible.builtin.debug:
     msg:
       - "Cluster: {{ cluster_name }}"
-      - "Salto de upgrade para {{ target_hop_version }} concluído."
+      - "Salto de upgrade para {{ target_hop_version }} concluído (CVO)."
       - "Versão anterior ao salto: {{ current_version_before_hop }}"
       - "Versão atual após salto (CVO): {{ r_cv_status_hop.resources[0].status.desired.version }}"
-      - "Status: OK"
+      - "MCPs dos workers permanecem pausados até o final de todos os saltos."
+      - "Status: OK (CVO)"
+  when: control_mcps_globally
+
+- name: "Sumário do Salto {{ target_hop_version }} para {{ cluster_name }} (sem controle global de MCP)"
+  ansible.builtin.debug:
+    msg:
+      - "Cluster: {{ cluster_name }}"
+      - "Salto de upgrade para {{ target_hop_version }} concluído (CVO)."
+      - "Versão anterior ao salto: {{ current_version_before_hop }}"
+      - "Versão atual após salto (CVO): {{ r_cv_status_hop.resources[0].status.desired.version }}"
+      - "Status: OK (CVO)"
+  when: not control_mcps_globally
