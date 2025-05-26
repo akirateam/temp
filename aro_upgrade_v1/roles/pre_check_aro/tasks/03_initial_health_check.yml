@@ -1,5 +1,4 @@
 ---
-# health_check_stage_name é passado como var para este include
 - name: "Health Check: {{ health_check_stage_name }} - Verificar ClusterVersion"
   kubernetes.core.k8s_info:
     kind: ClusterVersion
@@ -11,9 +10,11 @@
   until: >
     r_cv_health.resources is defined and
     r_cv_health.resources | length > 0 and
-    (r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | first).status == 'True' and
-    (r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | first).status == 'False' and
-    (r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | first).status == 'False'
+    r_cv_health.resources[0].status is defined and
+    r_cv_health.resources[0].status.conditions is defined and
+    (r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | first(default={'status': 'False'})).status == 'True' and
+    (r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | first(default={'status': 'True'})).status == 'False' and
+    (r_cv_health.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | first(default={'status': 'True'})).status == 'False'
 
 - name: "Health Check: {{ health_check_stage_name }} - Verificar ClusterOperators"
   kubernetes.core.k8s_info:
@@ -30,7 +31,7 @@
       - not item.status.conditions | selectattr('type', 'equalto', 'Progressing') | selectattr('status', 'equalto', 'True') | list
       - not item.status.conditions | selectattr('type', 'equalto', 'Degraded') | selectattr('status', 'equalto', 'True') | list
     fail_msg: "ClusterOperator {{ item.metadata.name }} em {{ health_check_stage_name }} não está saudável. Condições: {{ item.status.conditions }}"
-    quiet: true # Para não poluir o log com sucessos
+    quiet: true
   loop: "{{ r_co_health.resources }}"
   loop_control:
     label: "{{ item.metadata.name }}"
