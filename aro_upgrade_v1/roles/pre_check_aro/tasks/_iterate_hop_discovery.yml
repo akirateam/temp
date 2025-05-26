@@ -1,0 +1,115 @@
+---
+- name: "Iteração {{ iteration + 1 }} (interno): Buscando próximo salto de {{ simulated_current_version }} (canal EUS simulado: {{ simulated_current_eus_channel }})"
+  ansible.builtin.set_fact:
+    next_hop_candidate: null
+    hop_found_this_iteration: false
+
+- name: "Prioridade 1 (interno): Procurar patch EUS em {{ simulated_current_eus_channel }}"
+  vars:
+    current_minor_candidates_eval: |
+      {% set candidates = [] %}
+      {% for update in live_available_updates_param %} {# Usa o parâmetro passado #}
+        {% if update.version.split('.')[0] == simulated_current_version.split('.')[0] and
+              update.version.split('.')[1] == simulated_current_version.split('.')[1] and
+              update.version is version(simulated_current_version, '>') %}
+          {% set is_in_channel = false %}
+          {% if 'channels' in update and update.channels is iterable %}
+            {% for ch in update.channels %}{% if ch == simulated_current_eus_channel %}{% set is_in_channel = true %}{% endif %}{% endfor %}
+          {% endif %}
+          {% if is_in_channel %}
+            {% if simulated_current_eus_channel == target_channel_eus %}
+              {% if update.version is version(target_aro_version, '<=') %}
+                {% set candidates = candidates + [update.version] %}
+              {% endif %}
+            {% else %}
+              {% set candidates = candidates + [update.version] %}
+            {% endif %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+      {{ candidates | sort(version=true) }}
+  ansible.builtin.set_fact:
+    current_minor_candidates_list: "{{ current_minor_candidates_eval | from_yaml }}"
+
+- name: Definir next_hop_candidate com base na Prioridade 1 (interno)
+  ansible.builtin.set_fact:
+    next_hop_candidate: "{{ current_minor_candidates_list[0] if current_minor_candidates_list | length > 0 else null }}"
+    hop_found_this_iteration: "{{ true if current_minor_candidates_list | length > 0 else false }}"
+
+- name: "Prioridade 2 (interno): Procurar salto para próximo EUS minor (objetivando {{ target_channel_eus }})"
+  vars:
+    simulated_major_int_calc: "{{ simulated_current_version.split('.')[0] | int }}"
+    simulated_minor_int_calc: "{{ simulated_current_version.split('.')[1] | int }}"
+    target_channel_major_int_calc: "{{ target_channel_eus.split('-')[1].split('.')[0] | int }}"
+    target_channel_minor_int_calc: "{{ target_channel_eus.split('-')[1].split('.')[1] | int }}"
+    _potential_next_minor_calc: >-
+      {%- if simulated_major_int_calc == target_channel_major_int_calc and simulated_minor_int_calc < target_channel_minor_int_calc -%}
+      {{ simulated_minor_int_calc + 2 }}
+      {%- else -%}
+      {{- -1 -}}
+      {%- endif -%}
+    expected_next_eus_minor_val_calc: >-
+      {%- if _potential_next_minor_calc | int != -1 and _potential_next_minor_calc | int <= target_channel_minor_int_calc -%}
+      {{ _potential_next_minor_calc | int }}
+      {%- else -%}
+      {{- -1 -}}
+      {%- endif -%}
+    next_channel_to_check_calc: >-
+      {%- if expected_next_eus_minor_val_calc | int != -1 -%}
+      eus-{{ simulated_major_int_calc }}.{{ expected_next_eus_minor_val_calc }}
+      {%- else -%}
+      ""
+      {%- endif -%}
+    cross_minor_candidates_eval: |
+      {% set candidates = [] %}
+      {% if next_channel_to_check_calc != "" %}
+        {% for update in live_available_updates_param %} {# Usa o parâmetro passado #}
+          {% if update.version.split('.')[0] | int == simulated_major_int_calc and 
+                update.version.split('.')[1] | int == expected_next_eus_minor_val_calc and
+                update.version is version(simulated_current_version, '>') %}
+            {% set is_in_channel = false %}
+            {% if 'channels' in update and update.channels is iterable %}
+              {% for ch in update.channels %}{% if ch == next_channel_to_check_calc %}{% set is_in_channel = true %}{% endif %}{% endfor %}
+            {% endif %}
+            {% if is_in_channel %}
+              {% if next_channel_to_check_calc == target_channel_eus %}
+                {% if update.version is version(target_aro_version, '<=') %}
+                  {% set candidates = candidates + [update.version] %}
+                {% endif %}
+              {% else %}
+                {% set candidates = candidates + [update.version] %}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+      {{ candidates | sort(version=true) }}
+  ansible.builtin.set_fact:
+    cross_minor_candidates_list: "{{ cross_minor_candidates_eval | from_yaml }}"
+    _stashed_next_channel_to_check: "{{ next_channel_to_check_calc }}"
+  when: not hop_found_this_iteration
+
+- name: Definir next_hop_candidate com base na Prioridade 2 (interno)
+  ansible.builtin.set_fact:
+    next_hop_candidate: "{{ cross_minor_candidates_list[0] if cross_minor_candidates_list is defined and cross_minor_candidates_list | length > 0 else null }}"
+    simulated_current_eus_channel: "{{ _stashed_next_channel_to_check if cross_minor_candidates_list is defined and cross_minor_candidates_list | length > 0 else simulated_current_eus_channel }}"
+    hop_found_this_iteration: "{{ true if cross_minor_candidates_list is defined and cross_minor_candidates_list | length > 0 else false }}"
+  when: not hop_found_this_iteration
+
+- name: Registrar salto encontrado e atualizar simulação (interno)
+  when: hop_found_this_iteration and next_hop_candidate is not none
+  block:
+    - ansible.builtin.debug:
+        msg: "Cluster {{ cluster_name }}: Salto EUS encontrado de {{ simulated_current_version }} para {{ next_hop_candidate }} (canal EUS simulado para próximo salto: {{ simulated_current_eus_channel }})"
+    - ansible.builtin.set_fact:
+        calculated_upgrade_hops: "{{ calculated_upgrade_hops + [next_hop_candidate] }}"
+        simulated_current_version: "{{ next_hop_candidate }}"
+
+- name: "Definir flag se nenhum salto foi encontrado nesta iteração (para quebrar loop pai)"
+  ansible.builtin.set_fact:
+    _no_more_hops_can_be_found: true
+  when: not hop_found_this_iteration
+
+- name: "Incrementar contador de iteração (para debug e controle do loop pai)"
+  ansible.builtin.set_fact:
+    iteration: "{{ iteration | int + 1 }}"
