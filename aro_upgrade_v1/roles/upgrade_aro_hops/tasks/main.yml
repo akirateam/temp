@@ -33,43 +33,26 @@
 - name: "Bloco Principal de Upgrade (com tratamento de falhas)"
   when: upgrade_hops is defined and upgrade_hops | length > 0
   block:
-    - name: "PAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s_json_patch (tentativa com replace)"
-      kubernetes.core.k8s_json_patch:
+    - name: "PAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s state: patched"
+      kubernetes.core.k8s:
+        state: patched
         kind: MachineConfigPool
         api_version: machineconfiguration.openshift.io/v1
         name: worker
-        patch:
-          - op: replace
-            path: /spec/paused
-            value: true
-      register: r_mcp_global_pause_replace_status
+        definition:
+          spec:
+            paused: true
+      register: r_mcp_global_pause_status
       when: control_mcps_globally
       retries: 3
       delay: 10
-      ignore_errors: true
 
-    - name: "PAUSAR MCP (worker) globalmente em {{ cluster_name }} usando k8s_json_patch (tentativa com 'add' se 'replace' falhou)"
-      kubernetes.core.k8s_json_patch:
-        kind: MachineConfigPool
-        api_version: machineconfiguration.openshift.io/v1
-        name: worker
-        patch:
-          - op: add
-            path: /spec/paused
-            value: true
-      register: r_mcp_global_pause_add_status
-      when: control_mcps_globally and r_mcp_global_pause_replace_status.failed
-      retries: 3
-      delay: 10
-
-    - name: "Definir flag _mcps_paused_by_this_job"
+    - name: "Definir flag _mcps_paused_by_this_job se a pausa foi bem-sucedida"
       ansible.builtin.set_fact:
         _mcps_paused_by_this_job: true
       when:
         - control_mcps_globally
-        - >-
-          (r_mcp_global_pause_replace_status is defined and not r_mcp_global_pause_replace_status.failed) or
-          (r_mcp_global_pause_add_status is defined and not r_mcp_global_pause_add_status.failed)
+        - r_mcp_global_pause_status is defined and not r_mcp_global_pause_status.failed and r_mcp_global_pause_status.changed
 
     - name: "Aguardar MCP worker ser efetivamente pausado globalmente em {{ cluster_name }}"
       kubernetes.core.k8s_info:
@@ -113,31 +96,31 @@
       ansible.builtin.debug:
         msg: "ERRO na Fase 2 (Upgrade Hops) para o cluster {{ cluster_name }}. Tentando despausar MCPs (se foram pausados por este job)."
 
-    - name: "RESCUE: DESPAUSAR MCP (worker) globalmente em {{ cluster_name }} após falha no upgrade (usando k8s_json_patch)"
-      kubernetes.core.k8s_json_patch:
+    - name: "RESCUE: DESPAUSAR MCP (worker) globalmente em {{ cluster_name }} após falha no upgrade (usando k8s state: patched)"
+      kubernetes.core.k8s:
+        state: patched
         kind: MachineConfigPool
         api_version: machineconfiguration.openshift.io/v1
         name: worker
-        patch:
-          - op: replace
-            path: /spec/paused
-            value: false
+        definition:
+          spec:
+            paused: false
       when: _mcps_paused_by_this_job
-      ignore_errors: true
+      ignore_errors: true # Tentar o melhor para despausar
 
     - name: "RESCUE: Falhar playbook explicitamente após tentativa de cleanup"
       ansible.builtin.fail:
         msg: "Playbook falhou durante a Fase 2 (Upgrade Hops) para o cluster {{ cluster_name }}. Cleanup de MCPs tentado."
 
-- name: "DESPAUSAR MCPs (worker) globalmente em {{ cluster_name }} após todos os upgrades bem sucedidos (usando k8s_json_patch)"
-  kubernetes.core.k8s_json_patch:
+- name: "DESPAUSAR MCPs (worker) globalmente em {{ cluster_name }} após todos os upgrades bem sucedidos (usando k8s state: patched)"
+  kubernetes.core.k8s:
+    state: patched
     kind: MachineConfigPool
     api_version: machineconfiguration.openshift.io/v1
     name: worker
-    patch:
-      - op: replace
-        path: /spec/paused
-        value: false
+    definition:
+      spec:
+        paused: false
   register: r_mcp_global_unpause_status
   when:
     - upgrade_hops is defined
