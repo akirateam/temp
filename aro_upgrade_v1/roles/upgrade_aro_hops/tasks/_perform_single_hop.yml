@@ -34,12 +34,15 @@
     health_check_stage_name: "Cluster {{ cluster_name }} - Pré-Salto para {{ target_hop_version }}"
 
 - name: "Garantir que a versão do salto alvo ({{ target_hop_version }}) está na lista de acknowledgedVersions do ClusterVersion"
-  kubernetes.core.k8s_patch:
+  kubernetes.core.k8s: # Mudado para kubernetes.core.k8s
+    state: patched   # Usando state: patched
     kind: ClusterVersion
     api_version: config.openshift.io/v1
     name: version
     definition:
       spec:
+        # Fornecemos a lista completa e atualizada.
+        # Se acknowledgedVersions não existir, será criado. Se existir, será substituído.
         acknowledgedVersions: "{{ (current_spec_acknowledged_versions + [target_hop_version]) | unique | sort }}"
   when: target_hop_version not in current_spec_acknowledged_versions
   register: r_ack_patch_status
@@ -52,37 +55,27 @@
     api_version: config.openshift.io/v1
     name: version
   register: r_cv_after_ack_attempt
-  when: r_ack_patch_status is defined and r_ack_patch_status.changed
+  # Executar sempre se o patch foi tentado (para pegar o estado atual para o assert)
+  # ou se o ack já estava lá (para ter r_cv_after_ack_attempt definido para o assert seguinte).
+  when: (target_hop_version not in current_spec_acknowledged_versions and r_ack_patch_status is defined) or (target_hop_version in current_spec_acknowledged_versions)
 
-- name: "Assert: Acknowledge para {{ target_hop_version }} está presente no spec (se patch foi aplicado)"
+
+- name: "Assert: Acknowledge para {{ target_hop_version }} está presente no spec"
   ansible.builtin.assert:
     that:
-      - target_hop_version in (r_cv_after_ack_attempt.resources[0].spec.acknowledgedVersions | default([]))
+      - target_hop_version in ( (r_cv_after_ack_attempt.resources[0].spec.acknowledgedVersions if (r_cv_after_ack_attempt.resources is defined and r_cv_after_ack_attempt.resources | length > 0 and r_cv_after_ack_attempt.resources[0].spec.acknowledgedVersions is defined ) else current_spec_acknowledged_versions) | default([]) )
     fail_msg: >
-      Falha ao verificar o acknowledge para {{ target_hop_version }} no ClusterVersion spec após patch.
-      acknowledgedVersions atuais: {{ r_cv_after_ack_attempt.resources[0].spec.acknowledgedVersions | default([]) }}.
+      Falha ao verificar o acknowledge para {{ target_hop_version }} no ClusterVersion spec.
+      Resultado do patch: {{ r_ack_patch_status | default('Não executado ou não mudou') }}.
+      acknowledgedVersions atuais (após tentativa): {{ (r_cv_after_ack_attempt.resources[0].spec.acknowledgedVersions if (r_cv_after_ack_attempt.resources is defined and r_cv_after_ack_attempt.resources | length > 0 and r_cv_after_ack_attempt.resources[0].spec.acknowledgedVersions is defined) else current_spec_acknowledged_versions) | default([]) }}.
     quiet: true
-  when:
-    - r_ack_patch_status is defined and r_ack_patch_status.changed
-    - r_cv_after_ack_attempt.resources is defined and r_cv_after_ack_attempt.resources | length > 0
-
-- name: "Assert: Acknowledge para {{ target_hop_version }} já estava presente (se patch não mudou nada)"
-  ansible.builtin.assert:
-    that:
-      - target_hop_version in current_spec_acknowledged_versions
-    fail_msg: "Acknowledge para {{ target_hop_version }} não estava presente e o patch não o adicionou."
-    quiet: true
-  when:
-    - target_hop_version not in current_spec_acknowledged_versions # A condição original da tarefa de patch
-    - r_ack_patch_status is defined and not r_ack_patch_status.changed # E o patch não fez mudanças
-
 
 - name: "Calcular tempo para 'upgradeAt' (ex: agora + 2 minutos)"
   ansible.builtin.set_fact:
     upgrade_at_time: "{{ (ansible_date_time.epoch | int + 120) | strftime('%Y-%m-%dT%H:%M:%SZ', true) }}"
 
 - name: "Aplicar/Criar UpgradeConfig para iniciar o salto para {{ target_hop_version }}"
-  kubernetes.core.k8s:
+  kubernetes.core.k8s: # Este já estava correto, usando k8s state: present
     state: present
     definition:
       apiVersion: upgrade.managed.openshift.io/v1alpha1
