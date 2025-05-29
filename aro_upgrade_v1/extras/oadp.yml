@@ -1,0 +1,165 @@
+---
+- name: Manage OADP Operator Update
+  hosts: localhost # Ou onde seu controle Ansible roda com acesso ao cluster
+  gather_facts: no
+  vars:
+    oadp_namespace: "openshift-adp" # Verifique o namespace correto
+    oadp_subscription_name: "oadp-operator" # Verifique o nome da subscription
+    
+    # Defina o CSV de destino específico para a atualização.
+    # Este DEVE ser uma versão compatível e, para este cenário, >= 1.3.0
+    oadp_target_starting_csv: "oadp-operator.v1.3.1" # EXEMPLO: Substitua pelo CSV exato desejado (ex: o mais recente compatível >1.3.0)
+    # OU, se preferir usar um canal (a verificação de versão exata se torna mais complexa):
+    # oadp_target_channel: "stable-1.3" # EXEMPLO: Substitua pelo canal desejado que forneça versões >= 1.3
+
+    # Versão base para a verificação "já está acima de"
+    oadp_version_threshold: "1.3.0"
+
+  tasks:
+    - name: 0. Ensure Subscription name and namespace are provided
+      ansible.builtin.assert:
+        that:
+          - oadp_namespace | length > 0
+          - oadp_subscription_name | length > 0
+          # Assegure que ou o CSV de destino ou o canal de destino esteja definido
+          - (oadp_target_starting_csv | default('') | length > 0) or (oadp_target_channel | default('') | length > 0)
+        fail_msg: "Namespace, nome da Subscription e CSV/Canal de destino do OADP devem ser definidos."
+
+    - name: 1. Get current OADP Subscription details
+      community.kubernetes.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        namespace: "{{ oadp_namespace }}"
+        name: "{{ oadp_subscription_name }}"
+      register: oadp_sub_state
+      ignore_errors: yes # Para tratar o caso de a subscription não existir
+
+    - name: Fail if OADP Subscription not found
+      ansible.builtin.fail:
+        msg: "A Subscription do OADP '{{ oadp_subscription_name }}' não foi encontrada no namespace '{{ oadp_namespace }}'."
+      when: oadp_sub_state.resources is not defined or oadp_sub_state.resources | length == 0
+
+    - name: Set OADP Subscription facts
+      ansible.builtin.set_fact:
+        current_oadp_subscription: "{{ oadp_sub_state.resources[0] }}"
+      when: oadp_sub_state.resources is defined and oadp_sub_state.resources | length > 0
+
+    - name: 2. Extract and display current OADP version (BEFORE)
+      ansible.builtin.set_fact:
+        current_oadp_installed_csv: "{{ current_oadp_subscription.status.installedCSV | default('NotInstalled') }}"
+        # Regex para extrair '1.2.6' de 'something.v1.2.6' ou 'operator.v1.2.6-qualifier'
+        current_oadp_version_number: "{{ (current_oadp_subscription.status.installedCSV | default('') | regex_replace('^.*v(\\d+\\.\\d+(\\.\\d+)?(?:-[^ ]+)?).*$', '\\1')) if current_oadp_subscription.status.installedCSV else '0.0.0' }}"
+      when: current_oadp_subscription is defined
+
+    - name: Display current OADP version information
+      ansible.builtin.debug:
+        msg:
+          - "OADP Namespace: {{ oadp_namespace }}"
+          - "OADP Subscription: {{ oadp_subscription_name }}"
+          - "Current Installed CSV (BEFORE): {{ current_oadp_installed_csv }}"
+          - "Current Version Number (BEFORE): {{ current_oadp_version_number }}"
+          - "Current Channel: {{ current_oadp_subscription.spec.channel | default('N/A') }}"
+          - "Target CSV for update: {{ oadp_target_starting_csv | default('N/A (using channel)') }}"
+          - "Target Channel for update: {{ oadp_target_channel | default('N/A (using startingCSV)') }}"
+          - "Version Threshold Check: {{ oadp_version_threshold }}"
+      when: current_oadp_subscription is defined
+
+    # Condição: Só prosseguir com a atualização se a versão atual for MENOR que o threshold.
+    - name: 3. Block for OADP Update Tasks
+      block:
+        - name: "ACTION: Current OADP version {{ current_oadp_version_number }} is less than {{ oadp_version_threshold }}. Proceeding with update."
+          ansible.builtin.debug:
+            msg: "Tentando atualizar OADP de {{ current_oadp_installed_csv }} para o alvo (CSV: {{ oadp_target_starting_csv | default('N/A') }} / Canal: {{ oadp_target_channel | default('N/A') }})"
+
+        - name: Define OADP Subscription spec for update
+          ansible.builtin.set_fact:
+            oadp_subscription_update_spec:
+              # Manter configurações importantes da spec original
+              source: "{{ current_oadp_subscription.spec.source }}"
+              sourceNamespace: "{{ current_oadp_subscription.spec.sourceNamespace }}"
+              installPlanApproval: "{{ current_oadp_subscription.spec.installPlanApproval | default('Automatic') }}"
+              # Escolher UMA das opções abaixo: channel OU startingCSV
+              # Dando preferência para startingCSV se ambos estiverem definidos
+              startingCSV: "{{ oadp_target_starting_csv if (oadp_target_starting_csv | default('') | length > 0) else omit }}"
+              channel: "{{ oadp_target_channel if (oadp_target_starting_csv | default('') | length == 0 and oadp_target_channel | default('') | length > 0) else current_oadp_subscription.spec.channel if (oadp_target_starting_csv | default('') | length > 0) else omit }}" # Mantem canal original se specificCSV é usado ou usa target channel
+
+        - name: Update OADP Subscription
+          community.kubernetes.k8s:
+            state: merged # 'merged' para aplicar apenas as mudanças na spec
+            api_version: operators.coreos.com/v1alpha1
+            kind: Subscription
+            namespace: "{{ oadp_namespace }}"
+            name: "{{ oadp_subscription_name }}"
+            definition:
+              spec: "{{ oadp_subscription_update_spec }}"
+          register: update_action
+
+        - name: Wait for OADP Operator upgrade to complete
+          community.kubernetes.k8s_info:
+            api_version: operators.coreos.com/v1alpha1
+            kind: Subscription
+            namespace: "{{ oadp_namespace }}"
+            name: "{{ oadp_subscription_name }}"
+          register: oadp_sub_after_update
+          # A condição de 'until' depende se você está mirando um CSV específico ou um canal.
+          # Se for o oadp_target_starting_csv:
+          until: >
+            oadp_sub_after_update.resources is defined and
+            oadp_sub_after_update.resources | length > 0 and
+            oadp_sub_after_update.resources[0].status.installedCSV is defined and
+            (
+              (oadp_target_starting_csv | default('') | length > 0 and oadp_target_starting_csv in oadp_sub_after_update.resources[0].status.installedCSV) or
+              (oadp_target_channel | default('') | length > 0 and oadp_sub_after_update.resources[0].spec.channel == oadp_target_channel and oadp_sub_after_update.resources[0].status.installedCSV != current_oadp_installed_csv)
+            ) and
+            oadp_sub_after_update.resources[0].status.state == "AtLatestKnown" # Garante que a subscription está estável
+          retries: 45 # Aumentado para permitir mais tempo (total ~15 minutos com delay de 20s)
+          delay: 20
+          when: update_action.changed # Só esperar se a subscription foi de fato alterada
+
+        - name: Refresh OADP Subscription details after wait (AFTER)
+          community.kubernetes.k8s_info:
+            api_version: operators.coreos.com/v1alpha1
+            kind: Subscription
+            namespace: "{{ oadp_namespace }}"
+            name: "{{ oadp_subscription_name }}"
+          register: final_oadp_sub_status
+
+        - name: Extract final OADP version number (AFTER)
+          ansible.builtin.set_fact:
+            final_oadp_installed_csv: "{{ final_oadp_sub_status.resources[0].status.installedCSV | default('UpdateFailedOrNotRead') }}"
+            final_oadp_version_number: "{{ (final_oadp_sub_status.resources[0].status.installedCSV | default('') | regex_replace('^.*v(\\d+\\.\\d+(\\.\\d+)?(?:-[^ ]+)?).*$', '\\1')) if final_oadp_sub_status.resources[0].status.installedCSV else '0.0.0' }}"
+          when: final_oadp_sub_status.resources is defined and final_oadp_sub_status.resources | length > 0
+
+        - name: 4. Verify OADP update success (AFTER)
+          ansible.builtin.assert:
+            that:
+              - final_oadp_installed_csv != 'UpdateFailedOrNotRead'
+              # Se o alvo era um CSV específico:
+              - (oadp_target_starting_csv | default('') | length == 0) or (oadp_target_starting_csv in final_oadp_installed_csv)
+              # Ou, de forma mais genérica, que a nova versão seja >= ao threshold (se o target_csv não for exato ou estivermos usando canal)
+              - final_oadp_version_number is version(oadp_version_threshold, '>=')
+              # E que, se um CSV específico foi almejado, ele seja o instalado
+            success_msg: "SUCESSO: OADP Operator atualizado/verificado. CSV Instalado (DEPOIS): {{ final_oadp_installed_csv }} (Versão: {{ final_oadp_version_number }})"
+            fail_msg: "FALHA: OADP Operator NÃO foi atualizado como esperado. CSV Instalado (DEPOIS): {{ final_oadp_installed_csv }} (Versão: {{ final_oadp_version_number }}). Alvo CSV era '{{ oadp_target_starting_csv | default('N/A') }}' ou versão >= '{{ oadp_version_threshold }}'."
+          when: final_oadp_sub_status.resources is defined and final_oadp_sub_status.resources | length > 0
+
+      # Condição para o bloco: current_oadp_version_number < oadp_version_threshold E subscription existe
+      when:
+        - current_oadp_subscription is defined
+        - current_oadp_version_number is version(oadp_version_threshold, '<')
+        - current_oadp_installed_csv != 'NotInstalled' # Não tentar atualizar se não houver CSV instalado
+
+    - name: 3. Message if OADP is already at or above version threshold
+      ansible.builtin.debug:
+        msg: "INFO: OADP Operator (CSV: {{ current_oadp_installed_csv }}, Versão: {{ current_oadp_version_number }}) já está na versão {{ oadp_version_threshold }} ou superior. Nenhuma ação de atualização necessária por este playbook."
+      when:
+        - current_oadp_subscription is defined
+        - current_oadp_version_number is version(oadp_version_threshold, '>=')
+
+    - name: Message if OADP was not installed initially
+      ansible.builtin.debug:
+        msg: "INFO: OADP Operator não parece estar instalado (nenhum CSV encontrado). Nenhuma ação de atualização tomada."
+      when:
+        - current_oadp_subscription is defined
+        - current_oadp_installed_csv == 'NotInstalled'
+
