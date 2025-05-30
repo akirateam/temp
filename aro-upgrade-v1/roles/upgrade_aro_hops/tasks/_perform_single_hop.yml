@@ -1,0 +1,204 @@
+---
+- name: "Obter dados completos do ClusterVersion antes do salto para {{ target_hop_version }} em {{ cluster_name }}"
+  kubernetes.core.k8s_info:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+  register: r_cv_state_before_hop
+  retries: 3
+  delay: 10
+  until: r_cv_state_before_hop.resources is defined and r_cv_state_before_hop.resources | length > 0
+
+- name: Definir fatos para o salto atual
+  ansible.builtin.set_fact:
+    current_version_before_hop: "{{ r_cv_state_before_hop.resources[0].status.desired.version }}"
+    current_spec_acknowledged_versions: "{{ r_cv_state_before_hop.resources[0].spec.acknowledgedVersions | default([]) }}"
+    channel_for_this_hop: "{{ current_target_eus_channel_for_hop }}"
+
+- name: "Debug: Informações do salto para {{ target_hop_version }} em {{ cluster_name }}"
+  ansible.builtin.debug:
+    msg:
+      - "Cluster: {{ cluster_name }}"
+      - "Versão Atual: {{ current_version_before_hop }}"
+      - "Salto Alvo: {{ target_hop_version }}"
+      - "Canal EUS para este salto (UpgradeConfig): {{ channel_for_this_hop }}"
+      - "Versões já com Acknowledge (do spec): {{ current_spec_acknowledged_versions }}"
+
+- name: "Health Check (Comum): Pré-Salto para {{ target_hop_version }} em {{ cluster_name }}"
+  ansible.builtin.include_tasks: _common_health_check.yml
+  vars:
+    health_check_stage_name: "Cluster {{ cluster_name }} - Pré-Salto para {{ target_hop_version }}"
+
+# --- Atualizar OADP Operator se necessário ---
+- name: 1. Get current OADP Subscription details
+  community.kubernetes.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    namespace: "{{ oadp_namespace }}"
+    name: "{{ oadp_subscription_name }}"
+  register: oadp_sub_state
+  ignore_errors: yes
+
+- name: Fail if OADP Subscription not found
+  ansible.builtin.fail:
+    msg: "A Subscription do OADP oadp-operator não foi encontrada no namespace openshift-adp."
+  when: oadp_sub_state.resources is not defined or oadp_sub_state.resources | length == 0
+
+  
+####--- FIM
+
+
+
+- name: "Verificar se OADP Operator está instalado"
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: openshift-adp
+  register: oadp_csvs
+
+- name: "Verificar se OADP Operator já está na versão >= 1.3"
+  set_fact:
+    oadp_installed: "{{ oadp_csvs.resources | selectattr('metadata.name', 'search', 'oadp-operator.v1.[3-9]') | list | length > 0 }}"
+
+- name: "Pular atualização do OADP - versão já compatível"
+  debug:
+    msg: "OADP Operator já está na versão >= 1.3. Nenhuma ação necessária."
+  when: oadp_installed
+
+- block:
+    - name: "Atualizar canal da Subscription existente do OADP para stable-1.3"
+      kubernetes.core.k8s:
+        state: present
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        name: oadp-operator
+        namespace: openshift-adp
+        merge_type: merge
+        definition:
+          spec:
+            channel: stable-1.3
+            installPlanApproval: Manual
+            name: oadp-operator
+            source: redhat-operators
+            sourceNamespace: openshift-marketplace
+
+    - name: "Aguardar nova versão do OADP Operator (>= 1.3) aparecer"
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: InstallPlan
+        namespace: openshift-adp
+      register: oadp_installplans
+      until: >
+        oadp_installplans.resources | selectattr('spec.clusterServiceVersionNames', 'defined') |
+        selectattr('spec.clusterServiceVersionNames', 'contains', ['oadp-operator.v1.3']) | list | length > 0
+      retries: 10
+      delay: 30
+
+    - name: "Aprovar manualmente o InstallPlan da versão >= 1.3"
+      kubernetes.core.k8s:
+        state: present
+        api_version: operators.coreos.com/v1alpha1
+        kind: InstallPlan
+        name: "{{ (oadp_installplans.resources | selectattr('spec.clusterServiceVersionNames', 'defined') |
+                  selectattr('spec.clusterServiceVersionNames', 'contains', ['oadp-operator.v1.3']) | list).0.metadata.name }}"
+        namespace: openshift-adp
+        definition:
+          spec:
+            approved: true
+  when: not oadp_installed
+  
+# --- AdminAck para upgrades maiores ---
+- name: "Verificar se acknowledge é necessário para {{ target_hop_version }}"
+  set_fact:
+    should_acknowledge: "{{ target_hop_version not in (current_spec_acknowledged_versions | default([])) }}"
+
+- name: "Atualizar lista de acknowledgedVersions para UpgradeConfig"
+  set_fact:
+    updated_ack_versions: "{{ (current_spec_acknowledged_versions + [target_hop_version]) | unique }}"
+  when: should_acknowledge | default(false)
+
+# --- UpgradeConfig ---
+- name: "Coletar fatos do sistema para obter ansible_date_time"
+  ansible.builtin.setup:
+
+- name: "Calcular tempo para 'upgradeAt' (ex: agora + 2 minutos)"
+  ansible.builtin.set_fact:
+    upgrade_at_time: "{{ lookup('pipe', 'date -u -d \"+2 minutes\" +%Y-%m-%dT%H:%M:%SZ') }}"
+
+- name: "Aplicar/Criar UpgradeConfig para iniciar o salto para {{ target_hop_version }}"
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: upgrade.managed.openshift.io/v1alpha1
+      kind: UpgradeConfig
+      metadata:
+        name: managed-upgrade-config
+        namespace: openshift-managed-upgrade-operator
+      spec:
+        type: "ARO"
+        upgradeAt: "{{ upgrade_at_time }}"
+        PDBForceDrainTimeout: 60
+        desired:
+          channel: "{{ channel_for_this_hop }}"
+          version: "{{ target_hop_version }}"
+        acknowledgedVersions: "{{ updated_ack_versions }}"
+  register: r_apply_upgrade_config
+  changed_when: r_apply_upgrade_config.changed
+  when: should_acknowledge | default(false)
+
+- name: "Aguardar MUO processar o UpgradeConfig e CVO iniciar o upgrade"
+  ansible.builtin.pause:
+    minutes: 3
+  when: r_apply_upgrade_config.changed
+
+# --- Monitorar progresso ---
+- name: "Monitorar Progresso do Upgrade para {{ target_hop_version }} (CVO) em {{ cluster_name }}"
+  kubernetes.core.k8s_info:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+  register: r_cv_status_hop
+  until: >
+    r_cv_status_hop.resources is defined and
+    r_cv_status_hop.resources | length > 0 and
+    r_cv_status_hop.resources[0].status is defined and
+    r_cv_status_hop.resources[0].status.conditions is defined and
+    r_cv_status_hop.resources[0].status.desired.version == target_hop_version and
+    (((r_cv_status_hop.resources[0].status.conditions | selectattr('type', 'equalto', 'Available') | list) or [{'status': 'False'}]) | first).status == 'True' and
+    (((r_cv_status_hop.resources[0].status.conditions | selectattr('type', 'equalto', 'Progressing') | list) or [{'status': 'True'}]) | first).status == 'False' and
+    (((r_cv_status_hop.resources[0].status.conditions | selectattr('type', 'equalto', 'Degraded') | list) or [{'status': 'False'}]) | first).status == 'False'
+  retries: 360
+  delay: 60
+  vars:
+    ansible_command_timeout: 10800
+
+# --- Pós-salto ---
+- name: "Health Check (Comum): Pós-Salto para {{ target_hop_version }} (CVO Concluído) em {{ cluster_name }}"
+  ansible.builtin.include_tasks: _common_health_check.yml
+  vars:
+    health_check_stage_name: "Cluster {{ cluster_name }} - Pós-Salto {{ target_hop_version }} (CVO Concluído)"
+
+- name: "Verificar status do MCP worker (enquanto pausado globalmente) após CVO para {{ target_hop_version }}"
+  kubernetes.core.k8s_info:
+    kind: MachineConfigPool
+    api_version: machineconfiguration.openshift.io/v1
+    name: worker
+  register: r_mcp_status_while_paused
+  when: control_mcps_globally
+
+- name: "Debug: Status do MCP worker (pausado) para {{ target_hop_version }} em {{ cluster_name }}"
+  ansible.builtin.debug:
+    var: r_mcp_status_while_paused.resources[0].status
+  when:
+    - control_mcps_globally
+    - r_mcp_status_while_paused.resources is defined and r_mcp_status_while_paused.resources | length > 0
+
+- name: "Sumário do Salto {{ target_hop_version }} para {{ cluster_name }}"
+  ansible.builtin.debug:
+    msg:
+      - "Cluster: {{ cluster_name }}"
+      - "Salto de upgrade para {{ target_hop_version }} via UpgradeConfig iniciado/concluído (CVO)."
+      - "Versão anterior ao salto: {{ current_version_before_hop }}"
+      - "Versão atual após salto (CVO): {{ r_cv_status_hop.resources[0].status.desired.version if r_cv_status_hop.resources is defined and r_cv_status_hop.resources | length > 0 else 'N/A' }}"
+      - "MCPs dos workers permanecem pausados (se controle global ativo)."
+      - "Status: OK (CVO)"

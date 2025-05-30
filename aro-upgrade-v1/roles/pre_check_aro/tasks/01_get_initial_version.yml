@@ -1,0 +1,45 @@
+---
+- name: "Obter versão atual e canal do cluster {{ cluster_name }}"
+  kubernetes.core.k8s_info:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+  register: r_cluster_version_initial
+  retries: 3
+  delay: 10
+  until: r_cluster_version_initial.resources is defined and r_cluster_version_initial.resources | length > 0
+
+- name: Definir current_cluster_version e initial_cluster_channel
+  ansible.builtin.set_fact:
+    current_cluster_version: "{{ r_cluster_version_initial.resources[0].status.desired.version }}"
+    initial_cluster_channel: "{{ r_cluster_version_initial.resources[0].spec.channel | default('') }}"
+
+- name: "Exibir informações do cluster {{ cluster_name }}"
+  ansible.builtin.debug:
+    msg:
+      - "Cluster: {{ cluster_name }}"
+      - "Versão Atual: {{ current_cluster_version }}"
+      - "Canal EUS Inicial (do spec.channel): {{ initial_cluster_channel if initial_cluster_channel else 'Não definido ou não EUS' }}"
+      - "Versão Alvo: {{ target_aro_version }}"
+      - "Canal EUS Alvo: {{ target_channel_eus }}"
+
+- name: Validar se o canal inicial (spec.channel) parece ser EUS
+  ansible.builtin.assert:
+    that:
+      - initial_cluster_channel is match("^eus-.*")
+    fail_msg: >
+      O canal atual do cluster (spec.channel = '{{ initial_cluster_channel }}')
+      não parece ser um canal EUS. A automação de upgrade EUS pode não funcionar como esperado.
+      Verifique o 'oc get clusterversion version -o yaml' e ajuste spec.channel se necessário.
+    quiet: true
+  when: initial_cluster_channel | length > 0
+
+- name: "Verificar se o cluster {{ cluster_name }} já está na versão alvo ou superior"
+  when: "current_cluster_version is version(target_aro_version, '>=')"
+  block:
+    - name: Informar que {{ cluster_name }} já está na versão alvo
+      ansible.builtin.debug:
+        msg: "O cluster {{ cluster_name }} (versão {{ current_cluster_version }}) já está na versão alvo {{ target_aro_version }} ou superior. Nenhum upgrade será realizado."
+    - name: Definir calculated_upgrade_hops como vazio pois já está no alvo
+      ansible.builtin.set_fact:
+        calculated_upgrade_hops: []

@@ -1,0 +1,8 @@
+---
+cluster_name_stat: "aro_cluster_unspecified"
+upgrade_hops_stat: []
+target_aro_version_stat: ""
+target_channel_eus_stat: ""
+current_cluster_version_stat: ""
+initial_cluster_channel_stat: ""
+control_mcps_globally_stat: false

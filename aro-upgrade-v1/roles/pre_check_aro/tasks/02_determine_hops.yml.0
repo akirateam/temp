@@ -1,0 +1,54 @@
+---
+- name: Inicializar variáveis para descoberta de saltos em {{ cluster_name }}
+  ansible.builtin.set_fact:
+    calculated_upgrade_hops: []
+    simulated_current_version: "{{ current_cluster_version }}"
+    simulated_current_eus_channel: "{{ initial_cluster_channel }}"
+    iteration: 0
+    _no_more_hops_can_be_found: false
+
+- name: "Coletar 'availableUpdates' do cluster {{ cluster_name }} (uma vez para o planejamento)"
+  kubernetes.core.k8s_info:
+    kind: ClusterVersion
+    api_version: config.openshift.io/v1
+    name: version
+  register: r_cv_live_state
+  when: "current_cluster_version is version(target_aro_version, '<')"
+
+- name: Validar que availableUpdates foi obtido (se o upgrade é necessário)
+  ansible.builtin.assert:
+    that:
+      - r_cv_live_state.resources is defined
+      - r_cv_live_state.resources | length > 0
+      - r_cv_live_state.resources[0].status.availableUpdates is defined
+    fail_msg: "Não foi possível obter 'availableUpdates' do ClusterVersion para determinar os saltos."
+    quiet: true
+  when: "current_cluster_version is version(target_aro_version, '<')"
+
+- name: "Loop para determinar saltos de upgrade EUS dinamicamente para {{ cluster_name }}"
+  ansible.builtin.include_tasks: _iterate_hop_discovery.yml
+  vars:
+    live_available_updates_param: "{{ r_cv_live_state.resources[0].status.availableUpdates | default([]) }}"
+  loop: "{{ range(max_hop_discovery_iterations | int) | list }}" 
+  until: simulated_current_version is version(target_aro_version, '>=') or _no_more_hops_can_be_found
+  when: "current_cluster_version is version(target_aro_version, '<')"
+
+- name: "Verificar se o caminho completo até o alvo foi encontrado para {{ cluster_name }}"
+  when:
+    - "current_cluster_version is version(target_aro_version, '<')"
+    - simulated_current_version is version(target_aro_version, '<')
+  block:
+    - ansible.builtin.debug:
+        msg: >
+          AVISO para {{ cluster_name }}: Não foi possível determinar um caminho de upgrade EUS completo até {{ target_aro_version }}
+          (canal {{ target_channel_eus }}) a partir de {{ current_cluster_version }} (canal {{ initial_cluster_channel }}).
+          Saltos encontrados: {{ calculated_upgrade_hops }}.
+          Última versão simulada: {{ simulated_current_version }}.
+          Verifique os 'availableUpdates' do ClusterVersion e a lógica de seleção de saltos EUS.
+    - ansible.builtin.fail:
+        msg: "Falha ao determinar caminho de upgrade EUS completo para {{ target_aro_version }} no cluster {{ cluster_name }}."
+
+- name: "Exibir saltos de upgrade EUS determinados para {{ cluster_name }}"
+  ansible.builtin.debug:
+    var: calculated_upgrade_hops
+  when: calculated_upgrade_hops is defined and calculated_upgrade_hops | length > 0

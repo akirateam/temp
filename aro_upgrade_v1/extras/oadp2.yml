@@ -1,0 +1,160 @@
+oadp_operator_namespace: "openshift-adp"
+oadp_subscription_name: "oadp-operator" # Ou o nome que você usa, se diferente
+oadp_target_channel: "stable-1.3" # Ou o canal desejado mais recente/estável
+oadp_min_version_required: "1.3.0" # Versão mínima para pular a atualização
+oadp_source_name: "redhat-operators"
+oadp_source_namespace: "openshift-marketplace"
+
+
+# --- Atualizar OADP Operator se necessário (para >= {{ oadp_min_version_required }}) ---
+- name: "OADP Check: Coletar informações da Subscription {{ oadp_subscription_name }} no namespace {{ oadp_operator_namespace }}"
+  community.kubernetes.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    namespace: "{{ oadp_operator_namespace }}"
+    name: "{{ oadp_subscription_name }}"
+  register: r_oadp_sub_details
+  retries: 3
+  delay: 10
+
+- name: "OADP Check: Falhar se a Subscription {{ oadp_subscription_name }} não for encontrada"
+  ansible.builtin.fail:
+    msg: "A Subscription do OADP '{{ oadp_subscription_name }}' não foi encontrada no namespace '{{ oadp_operator_namespace }}'."
+  when: not r_oadp_sub_details.resources or r_oadp_sub_details.resources | length == 0
+
+- name: "OADP Check: Definir fatos da Subscription do OADP"
+  ansible.builtin.set_fact:
+    oadp_current_sub: "{{ r_oadp_sub_details.resources[0] }}"
+    oadp_current_installed_csv: "{{ r_oadp_sub_details.resources[0].status.installedCSV | default('') }}"
+    oadp_current_channel: "{{ r_oadp_sub_details.resources[0].spec.channel | default('') }}"
+
+- name: "OADP Check: Debug - Informações da Subscription OADP"
+  ansible.builtin.debug:
+    msg:
+      - "OADP Subscription Name: {{ oadp_current_sub.metadata.name }}"
+      - "OADP Current Installed CSV: {{ oadp_current_installed_csv }}"
+      - "OADP Current Channel: {{ oadp_current_channel }}"
+  when: oadp_current_installed_csv | length > 0
+
+- name: "OADP Check: Coletar informações do CSV instalado (se houver)"
+  community.kubernetes.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ oadp_operator_namespace }}"
+    name: "{{ oadp_current_installed_csv }}"
+  register: r_oadp_installed_csv_details
+  when: oadp_current_installed_csv | length > 0
+  retries: 3
+  delay: 10
+
+- name: "OADP Check: Determinar a versão atual do OADP instalado"
+  ansible.builtin.set_fact:
+    oadp_current_version: "{{ r_oadp_installed_csv_details.resources[0].spec.version | default('0.0.0') if r_oadp_installed_csv_details.resources else '0.0.0' }}"
+
+- name: "OADP Check: Debug - Versão Atual do OADP"
+  ansible.builtin.debug:
+    msg: "Versão atual do OADP Operator detectada: {{ oadp_current_version }}"
+
+- name: "OADP Check: Verificar se a atualização do OADP é necessária"
+  ansible.builtin.set_fact:
+    oadp_update_needed: "{{ oadp_current_version is version(oadp_min_version_required, '<') or oadp_current_channel != oadp_target_channel }}"
+
+- name: "OADP Info: Pular atualização do OADP"
+  ansible.builtin.debug:
+    msg: "OADP Operator (versão {{ oadp_current_version }}, canal {{ oadp_current_channel }}) já atende aos requisitos (mínimo {{ oadp_min_version_required }}, canal {{ oadp_target_channel }}). Nenhuma ação necessária."
+  when: not oadp_update_needed
+
+- name: "Bloco de Atualização do OADP Operator"
+  when: oadp_update_needed
+  block:
+    - name: "OADP Update: Modificar Subscription para o canal '{{ oadp_target_channel }}' e aprovação Manual"
+      kubernetes.core.k8s:
+        state: patched
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        name: "{{ oadp_subscription_name }}"
+        namespace: "{{ oadp_operator_namespace }}"
+        definition:
+          spec:
+            channel: "{{ oadp_target_channel }}"
+            installPlanApproval: Manual
+            name: "{{ oadp_subscription_name }}" # Garante que o nome não seja alterado acidentalmente
+            source: "{{ oadp_source_name }}"
+            sourceNamespace: "{{ oadp_source_namespace }}"
+      register: r_oadp_sub_patched
+
+    - name: "OADP Update: Aguardar a propagação da mudança na Subscription e surgimento do InstallPlan"
+      ansible.builtin.pause:
+        seconds: 30
+      when: r_oadp_sub_patched.changed
+
+    - name: "OADP Update: Coletar novamente dados da Subscription para obter o InstallPlan pendente"
+      community.kubernetes.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: Subscription
+        namespace: "{{ oadp_operator_namespace }}"
+        name: "{{ oadp_subscription_name }}"
+      register: r_oadp_sub_after_patch
+      until: >
+        r_oadp_sub_after_patch.resources is defined and
+        r_oadp_sub_after_patch.resources | length > 0 and
+        r_oadp_sub_after_patch.resources[0].status.installPlanRef is defined and
+        r_oadp_sub_after_patch.resources[0].status.installPlanRef.name is defined and
+        (r_oadp_sub_after_patch.resources[0].status.installedCSV | default('') != r_oadp_sub_after_patch.resources[0].status.currentCSV | default(''))
+      retries: 10 # Aumentado para dar tempo ao OLM de gerar o InstallPlan
+      delay: 30
+      vars:
+        ansible_command_timeout: 300
+
+    - name: "OADP Update: Falhar se o InstallPlan não for encontrado na Subscription após a atualização do canal"
+      ansible.builtin.fail:
+        msg: "Não foi possível encontrar a referência do InstallPlan na Subscription {{ oadp_subscription_name }} após mudar para o canal {{ oadp_target_channel }}."
+      when: not r_oadp_sub_after_patch.resources[0].status.installPlanRef.name
+
+    - name: "OADP Update: Definir nome do InstallPlan pendente"
+      ansible.builtin.set_fact:
+        oadp_pending_install_plan_name: "{{ r_oadp_sub_after_patch.resources[0].status.installPlanRef.name }}"
+
+    - name: "OADP Update: Debug - InstallPlan do OADP a ser aprovado"
+      ansible.builtin.debug:
+        msg: "InstallPlan do OADP a ser aprovado: {{ oadp_pending_install_plan_name }}"
+
+    - name: "OADP Update: Aprovar o InstallPlan pendente do OADP"
+      kubernetes.core.k8s:
+        state: patched # Usar 'patched' para modificar apenas o campo 'approved'
+        api_version: operators.coreos.com/v1alpha1
+        kind: InstallPlan
+        name: "{{ oadp_pending_install_plan_name }}"
+        namespace: "{{ oadp_operator_namespace }}"
+        definition:
+          spec:
+            approved: true
+      register: r_oadp_ip_approved
+
+    - name: "OADP Update: Aguardar OADP Operator ser atualizado para uma versão >= {{ oadp_min_version_required }} no canal {{ oadp_target_channel }}"
+      community.kubernetes.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: "{{ oadp_operator_namespace }}"
+      register: r_oadp_csv_check_loop
+      until: >
+        r_oadp_csv_check_loop.resources is defined and
+        (r_oadp_csv_check_loop.resources
+          | selectattr('spec.displayName', 'search', 'OADP Operator') # Nome mais genérico
+          | selectattr('status.phase', 'equalto', 'Succeeded')
+          | selectattr('spec.version', 'version_compare', oadp_min_version_required, '>=')
+          | list
+        ) | length > 0 and
+        (r_oadp_csv_check_loop.resources # Garante que o CSV ativo seja o da Subscription correta
+          | selectattr('metadata.name', 'equalto', r_oadp_sub_after_patch.resources[0].status.currentCSV | default(r_oadp_sub_after_patch.resources[0].status.installedCSV) )
+          | list
+        ) | length > 0
+      retries: 20 # Aumentado (instalação de operator pode demorar)
+      delay: 30
+      vars:
+        ansible_command_timeout: 600 # Tempo para cada tentativa
+
+    - name: "OADP Update: Sucesso - OADP Operator atualizado"
+      ansible.builtin.debug:
+        msg: "OADP Operator atualizado com sucesso para uma versão compatível."
+# --- Fim da Atualização do OADP ---

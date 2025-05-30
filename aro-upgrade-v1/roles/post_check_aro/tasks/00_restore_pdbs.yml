@@ -1,0 +1,4 @@
+---
+- name: "Pular restauração de PDBs (removido conforme requisito)"
+  ansible.builtin.debug:
+    msg: "A etapa de restaurar PDBs foi removida dos requisitos."

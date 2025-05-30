@@ -1,0 +1,19 @@
+---
+- name: "ARO Upgrade - Fase 2: Executar Saltos de Upgrade"
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    ansible_python_interpreter: "/usr/bin/python3"
+    cluster_name_stat: "aro_cluster_default_upgrade"
+
+  environment:
+    http_proxy: ""
+    https_proxy: ""
+    no_proxy: ""
+    HTTP_PROXY: ""
+    HTTPS_PROXY: ""
+    NO_PROXY: ""
+
+  roles:
+    - role: upgrade_aro_hops

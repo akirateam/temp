@@ -1,0 +1,4 @@
+---
+- name: "Pular gerenciamento de PDBs (removido conforme requisito)"
+  ansible.builtin.debug:
+    msg: "A etapa de salvar e zerar PDBs foi removida dos requisitos."
