@@ -1,0 +1,432 @@
+Entendido! Vamos consolidar e organizar todo o código discutido em uma estrutura pronta para ser versionada no GitHub, com foco em robustez, segurança e otimização.
+Vou apresentar a estrutura de diretórios sugerida e o conteúdo de cada arquivo.
+Estrutura de Diretórios Proposta:
+.
+├── inventory/
+│   └── hosts.ini
+├── playbooks/
+│   ├── collect_aro_state.yml
+│   ├── generate_aro_report.yml
+│   └── publish_to_grafana.yml
+├── templates/
+│   └── report_template.html.j2
+├── vars/
+│   ├── main.yml
+│   └── vault.yml  (Este arquivo será criptografado com Ansible Vault)
+└── README.md
+
+1. inventory/hosts.ini
+Este arquivo define o inventário para o Ansible. Como os playbooks provavelmente rodarão localmente (onde o oc CLI está configurado ou onde o acesso à API do Kubernetes/Grafana é feito), ele será simples.
+# inventory/hosts.ini
+[aro_report_controller]
+localhost ansible_connection=local ansible_python_interpreter={{ ansible_playbook_python }}
+
+2. vars/main.yml
+Variáveis não sensíveis que configuram o comportamento dos playbooks.
+# vars/main.yml
+
+# --- Configurações para Coleta de Dados ---
+# Diretório base onde os dados 'before_upgrade' e 'after_upgrade' serão salvos
+collection_base_dir: "{{ playbook_dir }}/../collected_data" # Relativo ao diretório do playbook
+
+# Padrão regex para namespaces de sistema a serem ignorados na coleta de microserviços
+system_namespaces_pattern: "^(openshift-|kube-|default$|ibm-|calico-|tigera-|velero-|node-local-dns).*"
+
+# --- Configurações para Geração de Relatório ---
+# Nome do arquivo de relatório HTML gerado
+report_html_filename: "aro_upgrade_comparison_report.html"
+
+# --- Configurações para Publicação no Grafana ---
+grafana_url: "https://seu-grafana.example.com" # URL da sua instância Grafana
+grafana_validate_certs: true # Mude para false se usar certificados autoassinados (não recomendado para produção)
+
+# UID da pasta no Grafana onde o dashboard será publicado. Crie a pasta no Grafana e obtenha seu UID.
+# Exemplo: se a URL da pasta for https://seu-grafana.example.com/dashboards/f/abcdef123/minha-pasta
+# o UID é 'abcdef123'
+grafana_report_folder_uid: "SUA_PASTA_GRAFANA_UID"
+
+# UID para o dashboard do relatório no Grafana. Ajuda a manter o dashboard estável entre atualizações.
+# Pode ser um valor único, como "aro-upgrade-report-cluster-X"
+grafana_dashboard_uid_prefix: "aro-upgrade-report" # Um sufixo (ex: nome do cluster) pode ser adicionado no playbook
+
+# Título do dashboard no Grafana
+grafana_dashboard_title_prefix: "ARO Upgrade Report"
+
+# Tags para o dashboard no Grafana
+grafana_dashboard_tags: ["ansible", "aro", "report", "upgrade"]
+
+# Mensagem de commit ao atualizar o dashboard no Grafana
+grafana_commit_message: "Dashboard de relatório de upgrade ARO atualizado via Ansible"
+
+3. vars/vault.yml
+Variáveis sensíveis, como a API key do Grafana. Este arquivo DEVE ser criptografado usando ansible-vault encrypt vars/vault.yml.
+# vars/vault.yml
+# Execute: ansible-vault encrypt vars/vault.yml
+
+grafana_api_key: "SUA_GRAFANA_API_KEY_AQUI"
+
+Lembre-se de criar uma API Key no Grafana com role "Editor" ou "Admin".
+4. templates/report_template.html.j2
+Este é o template Jinja2 para o relatório HTML. Usaremos a versão mais detalhada que discutimos anteriormente, que inclui CSS para estilização.
+{# templates/report_template.html.j2 #}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Relatório de Upgrade ARO</title>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; color: #333; }
+        h1, h2, h3 { color: #2c3e50; }
+        h1 { text-align: center; color: #3498db; margin-bottom: 30px; }
+        h2 { border-bottom: 2px solid #3498db; padding-bottom: 5px; margin-top: 40px; margin-bottom: 20px; }
+        h3 { color: #2980b9; margin-top: 25px; margin-bottom: 15px; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; box-shadow: 0 2px 3px rgba(0,0,0,0.1); font-size: 0.9em;}
+        th, td { border: 1px solid #bdc3c7; padding: 10px; text-align: left; vertical-align: top; }
+        th { background-color: #3498db; color: white; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        tr:hover { background-color: #ecf0f1; }
+        .notes { margin-top: 8px; padding-left: 15px; border-left: 3px solid #f1c40f; }
+        .notes p { margin: 5px 0; font-size: 0.95em; }
+        .note-alert { color: #c0392b; font-weight: bold; }
+        .note-info { color: #2980b9; }
+        .note-ok { color: #27ae60; }
+        .summary-section { padding: 15px; margin-bottom: 30px; border-radius: 5px; }
+        .summary-alert { background-color: #e74c3c; color: white; }
+        .summary-alert h2 { color: white; border-bottom: 1px solid #c0392b; }
+        .summary-alert ul { list-style-type: none; padding-left: 0; }
+        .summary-alert li { margin-bottom: 5px; }
+        .section-no-alerts { color: #27ae60; font-style: italic; margin-top: 10px; }
+        .details-box { background-color: #ecf0f1; padding: 10px; border-radius: 4px; margin-top:5px; margin-bottom:15px; }
+        .details-box p { margin: 4px 0; font-size: 0.9em; }
+        .footer { text-align:center; font-size:0.8em; color: #7f8c8d; margin-top: 40px; padding-top: 20px; border-top: 1px solid #bdc3c7;}
+
+        /* Estilos específicos para Grafana (caso o CSS externo não funcione bem) */
+        /* Se estiver embutindo em um painel de texto do Grafana, é altamente recomendável
+           testar exaustivamente. O Grafana pode sobrescrever ou ignorar alguns destes estilos.
+           Estilos inline diretamente nos elementos HTML podem ser mais robustos no Grafana. */
+    </style>
+</head>
+<body>
+    <h1>Relatório de Comparação de Upgrade ARO</h1>
+
+    {% if comparison_report.overall_summary | length > 0 %}
+    <div class="summary-section summary-alert">
+        <h2>Sumário Geral de Alertas Críticos</h2>
+        <ul>
+        {% for alert in comparison_report.overall_summary %}
+            <li>{{ alert }}</li>
+        {% endfor %}
+        </ul>
+    </div>
+    {% else %}
+        <p class="section-no-alerts"><strong>Sumário Geral:</strong> Nenhum alerta crítico identificado automaticamente.</p>
+    {% endif %}
+
+    <h2>1. Saúde do Cluster</h2>
+
+    <h3>1.1. ClusterVersion</h3>
+    {% if comparison_report.cluster_version and comparison_report.cluster_version.after %}
+        <div class="details-box">
+            <p><strong>Versão Antes:</strong> {{ comparison_report.cluster_version.before.current_version | default('N/A') }} (Desejada: {{ comparison_report.cluster_version.before.desired_version | default('N/A') }})</p>
+            <p><strong>Versão Depois:</strong> {{ comparison_report.cluster_version.after.current_version | default('N/A') }} (Desejada: {{ comparison_report.cluster_version.after.desired_version | default('N/A') }})</p>
+            <p><strong>Concluído Em (Depois):</strong> {{ comparison_report.cluster_version.after.completed_time | default('N/A') }}</p>
+        </div>
+        {% if comparison_report.cluster_version.notes | length > 0 %}
+        <div class="notes">
+        {% for note in comparison_report.cluster_version.notes %}
+            <p class="{{ 'note-alert' if 'ALERTA:' in note else ('note-ok' if 'OK:' in note else 'note-info') }}">{{ note }}</p>
+        {% endfor %}
+        </div>
+        {% else %}
+        <p class="section-no-alerts">ClusterVersion: Sem notas ou alertas específicos.</p>
+        {% endif %}
+    {% else %}
+        <p>Dados da ClusterVersion não disponíveis para comparação.</p>
+    {% endif %}
+
+    <h3>1.2. ClusterOperators</h3>
+    {% if comparison_report.cluster_operators %}
+    <table>
+        <thead>
+        <tr>
+            <th>Operador</th>
+            <th>Versão Antes</th>
+            <th>Versão Depois</th>
+            <th>Status Antes (A/P/D)</th>
+            <th>Status Depois (A/P/D)</th>
+            <th>Notas</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for co in comparison_report.cluster_operators %}
+        <tr>
+            <td>{{ co.name }}</td>
+            <td>{{ co.before_version | default('N/A') }}</td>
+            <td>{{ co.after_version | default('N/A') }}</td>
+            <td>
+                {% if co.before_status == 'NÃO EXISTIA' or co.before_status == 'DESAPARECEU' %}
+                    {{ co.before_status }}
+                {% else %}
+                    A:{{ co.before_status | default([]) | community.general.json_query('[?type==`Available`].status | [0]') | default('?') }}
+                    P:{{ co.before_status | default([]) | community.general.json_query('[?type==`Progressing`].status | [0]') | default('?') }}
+                    D:{{ co.before_status | default([]) | community.general.json_query('[?type==`Degraded`].status | [0]') | default('?') }}
+                {% endif %}
+            </td>
+            <td>
+                {% if co.after_status == 'NÃO EXISTIA' or co.after_status == 'DESAPARECEU' %}
+                    {{ co.after_status }}
+                {% else %}
+                    A:{{ co.after_status | default([]) | community.general.json_query('[?type==`Available`].status | [0]') | default('?') }}
+                    P:{{ co.after_status | default([]) | community.general.json_query('[?type==`Progressing`].status | [0]') | default('?') }}
+                    D:{{ co.after_status | default([]) | community.general.json_query('[?type==`Degraded`].status | [0]') | default('?') }}
+                {% endif %}
+            </td>
+            <td>
+                {% if co.notes | length > 0 %}
+                <div class="notes">
+                {% for note in co.notes %}
+                    <p class="{{ 'note-alert' if 'ALERTA:' in note else ('note-ok' if 'OK:' in note else 'note-info') }}">{{ note }}</p>
+                {% endfor %}
+                </div>
+                {% else %}
+                 <span class="note-ok">Sem mudanças ou alertas.</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+        <p>Dados de ClusterOperators não disponíveis.</p>
+    {% endif %}
+
+    <h3>1.3. Nós (Nodes)</h3>
+    {% if comparison_report.nodes %}
+    <table>
+        <thead>
+        <tr>
+            <th>Nó</th>
+            <th>Kubelet Antes</th>
+            <th>Kubelet Depois</th>
+            <th>Ready Antes</th>
+            <th>Ready Depois</th>
+            <th>Notas</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for node in comparison_report.nodes %}
+        <tr>
+            <td>{{ node.name }}</td>
+            <td>{{ node.before_kubelet_version | default('N/A') }}</td>
+            <td>{{ node.after_kubelet_version | default('N/A') }}</td>
+            <td>{{ node.before_ready_status | default('N/A') }}</td>
+            <td>{{ node.after_ready_status | default('N/A') }}</td>
+            <td>
+                {% if node.notes | length > 0 %}
+                <div class="notes">
+                {% for note in node.notes %}
+                    <p class="{{ 'note-alert' if 'ALERTA:' in note else ('note-ok' if 'OK:' in note else 'note-info') }}">{{ note }}</p>
+                {% endfor %}
+                </div>
+                {% else %}
+                <span class="note-ok">Sem mudanças ou alertas.</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+        <p>Dados dos Nós não disponíveis.</p>
+    {% endif %}
+
+    <h2>2. Saúde dos Microserviços (Deployments)</h2>
+    {% if comparison_report.deployments %}
+    <table>
+      <thead>
+      <tr>
+          <th>Namespace/Deployment</th>
+          <th>Imagem Template (Antes / Depois)</th>
+          <th>Réplicas (D/R) (Antes / Depois)</th>
+          <th>Pod Restarts (Antes / Depois)</th>
+          <th>Pods Falhados (Depois)</th>
+          <th>Notas</th>
+      </tr>
+      </thead>
+      <tbody>
+      {% for dep in comparison_report.deployments %}
+      <tr>
+          <td><strong>{{ dep.namespace }}</strong>/<br>{{ dep.name }}</td>
+          <td>
+              Antes: {{ dep.before_image_template | default('N/A') }}<br>
+              Depois: {{ dep.after_image_template | default('N/A') }}
+          </td>
+          <td>
+              Antes: {{ dep.before_desired_replicas | default('N/A') }}/{{ dep.before_ready_replicas | default('N/A') }}<br>
+              Depois: {{ dep.after_desired_replicas | default('N/A') }}/{{ dep.after_ready_replicas | default('N/A') }}
+          </td>
+          <td>
+              {{ dep.before_pod_summary.restarts_total | default('N/A') }} /
+              {{ dep.after_pod_summary.restarts_total | default('N/A') }}
+          </td>
+          <td>{{ dep.after_pod_summary.failed | default(0) }}</td>
+          <td>
+              {% if dep.notes | length > 0 %}
+              <div class="notes">
+              {% for note in dep.notes %}
+                  <p class="{{ 'note-alert' if 'ALERTA:' in note else ('note-ok' if 'OK:' in note else 'note-info') }}">{{ note }}</p>
+              {% endfor %}
+              </div>
+              {% endif %}
+              {% set after_template_image = dep.after_image_template | default('') %}
+              {% set after_pod_images = dep.after_pod_summary.images | default([]) %}
+              {% set mismatched_images = [] %}
+              {% if after_pod_images %}
+                {% for img in after_pod_images %}
+                    {% if img != after_template_image and img not in mismatched_images %}
+                        {% set _ = mismatched_images.append(img) %}
+                    {% endif %}
+                {% endfor %}
+              {% endif %}
+              {% if mismatched_images | length > 0 %}
+                <div class="notes">
+                    <p class="note-alert">ALERTA: Imagens de Pods ({{ mismatched_images | join(', ') }}) não consistentes com template ({{ after_template_image }}).</p>
+                </div>
+              {% endif %}
+              {% if not dep.notes and not (mismatched_images | length > 0) %}
+                 <span class="note-ok">Sem mudanças ou alertas.</span>
+              {% endif %}
+          </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+        <p>Dados de Deployments não disponíveis.</p>
+    {% endif %}
+
+    <div class="footer">
+        Relatório gerado em: {{ ansible_date_time.iso8601 }}
+    </div>
+
+</body>
+</html>
+
+5. playbooks/collect_aro_state.yml
+Este playbook coleta os dados do cluster ARO. É parametrizado pela variável run_phase ('before_upgrade' ou 'after_upgrade').
+# playbooks/collect_aro_state.yml
+---
+- name: Collect ARO Cluster and Business Microservices State
+  hosts: aro_report_controller # Definido no inventory/hosts.ini
+  gather_facts: false
+  vars_files:
+    - ../vars/main.yml
+    # vault.yml não é necessário aqui, a menos que precise de credenciais para o k8s/oc
+
+  # run_phase é esperado como extra-var: -e "run_phase=before_upgrade" or -e "run_phase=after_upgrade"
+  # Exemplo: ansible-playbook playbooks/collect_aro_state.yml -e "run_phase=before_upgrade" --ask-vault-pass (se vault.yml fosse usado)
+
+  tasks:
+    - name: Validate run_phase variable
+      ansible.builtin.fail:
+        msg: "A variável 'run_phase' deve ser 'before_upgrade' ou 'after_upgrade'."
+      when: run_phase is not defined or (run_phase != 'before_upgrade' and run_phase != 'after_upgrade')
+
+    - name: Define output directory for collected data
+      ansible.builtin.set_fact:
+        current_output_dir: "{{ collection_base_dir }}/{{ run_phase }}"
+
+    - name: Create output directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ current_output_dir }}/cluster_health"
+        - "{{ current_output_dir }}/namespaces_data"
+
+    - name: Display collection path
+      ansible.builtin.debug:
+        msg: "Coletando dados para '{{ run_phase }}' em '{{ current_output_dir }}'"
+
+    # --- 1. Coleta de Saúde do Cluster ---
+    - name: Get ClusterVersion
+      kubernetes.core.k8s_info:
+        api_version: config.openshift.io/v1
+        kind: ClusterVersion
+        name: version # Geralmente o nome é 'version'
+      register: cluster_version_raw
+      ignore_errors: true
+
+    - name: Save relevant ClusterVersion info
+      ansible.builtin.copy:
+        content: "{{ {'name': cluster_version_raw.resources[0].metadata.name, 'desired_version': cluster_version_raw.resources[0].status.desired.version, 'current_version': cluster_version_raw.resources[0].status.history[0].version, 'completed_time': cluster_version_raw.resources[0].status.history[0].completionTime, 'conditions': cluster_version_raw.resources[0].status.conditions } | to_nice_json }}"
+        dest: "{{ current_output_dir }}/cluster_health/cluster_version.json"
+      when: cluster_version_raw.resources is defined and cluster_version_raw.resources | length > 0
+
+    - name: Get ClusterOperators
+      kubernetes.core.k8s_info:
+        api_version: config.openshift.io/v1
+        kind: ClusterOperator
+      register: cluster_operators_raw
+      ignore_errors: true
+
+    - name: Save relevant ClusterOperators info
+      ansible.builtin.copy:
+        content: "{{ cluster_operators_raw.resources | default([]) | community.general.json_query('[].{name: metadata.name, version: status.versions[?name==`operator`].version | [0], conditions: status.conditions}') | to_nice_json }}"
+        dest: "{{ current_output_dir }}/cluster_health/cluster_operators.json"
+      when: cluster_operators_raw.resources is defined
+
+    - name: Get Nodes
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+      register: nodes_raw
+      ignore_errors: true
+
+    - name: Save relevant Node info
+      ansible.builtin.copy:
+        content: "{{ nodes_raw.resources | default([]) | community.general.json_query('[].{name: metadata.name, role_master: metadata.labels.\"node-role.kubernetes.io/master\", role_worker: metadata.labels.\"node-role.kubernetes.io/worker\", infra_type: metadata.labels.\"node.openshift.io/os_id\", kubelet_version: status.nodeInfo.kubeletVersion, conditions: status.conditions, allocatable_cpu: status.allocatable.cpu, allocatable_memory: status.allocatable.memory, capacity_cpu: status.capacity.cpu, capacity_memory: status.capacity.memory}') | to_nice_json }}"
+        dest: "{{ current_output_dir }}/cluster_health/nodes.json"
+      when: nodes_raw.resources is defined
+
+    # --- 2. Coleta de Saúde dos Microserviços de Negócios ---
+    - name: Get all namespaces
+      kubernetes.core.k8s_info:
+        kind: Namespace
+        api_version: v1
+      register: all_namespaces_raw
+      ignore_errors: true
+
+    - name: Filter business namespaces
+      ansible.builtin.set_fact:
+        business_namespaces: "{{ all_namespaces_raw.resources | default([]) | community.general.json_query('[? !(metadata.name =~ system_namespaces_pattern) ].metadata.name') }}"
+      when: all_namespaces_raw.resources is defined
+
+    - name: Initialize final deployments report list
+      ansible.builtin.set_fact:
+        final_deployments_report: []
+
+    - name: Process each business namespace for Deployments
+      when: business_namespaces is defined and business_namespaces | length > 0
+      loop: "{{ business_namespaces }}"
+      loop_control:
+        loop_var: item_ns
+        label: "{{ item_ns }}"
+      block:
+        - name: Get Deployments in namespace {{ item_ns }}
+          kubernetes.core.k8s_info:
+            api_version: apps/v1
+            kind: Deployment
+            namespace: "{{ item_ns }}"
+          register: deployments_in_ns_raw
+          ignore_errors: true
+
+        - name: Iterate through deployments in {{ item_ns }} to fetch and aggregate pod data
+          when: deployments_in_ns_raw.resources is defined
+          loop: "{{ deployments_in_ns_raw.resources | default([]) }}"
+          loop_control:
+            loop_var: deployment_item
+            label: "{{ deployment_item.metadata.name }}"
+          block:
+            - name: Get pods for deployment {{ deployment_item.metadat
