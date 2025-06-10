@@ -1,3 +1,14 @@
+Estamos continuando um automação em massa de Clusters ARO, e nos deparamos com os seguintes problemas:
+
+- Durante a fase upgrade tivemos situações onde a atualização ficava pausada com problemas de fazer drain do nó em questão, normalmente isto ocorreu por causa de pods com pdbs, ou pods com problemas que ficavam em estado de Terminating.
+- Ao final e conclusão do upgrade e hopes em Channel EUS, e tbem após o término dos MCPs de worker e infra atualizarem e finalizar por completo o upgrade, as vezes acontecem de pods de sistema ficarem em crashloopback por exemplo: csi driver de Azure file, e dynatrace
+
+Pensando em upgrade em massa, fica inviável um atuação manual para estes casos que afetam um upgrade, pode identificar e corrigir além destes citados acima, demais problemas que impeçam este upgrade e estado saudável do cluster e micro serviços antes, durante e pós um upgrade.
+
+A sugestão é como um listener, trigger ou Job no Red Hat AAP, a automação é toda em Ansible.
+
+---
+
 Este é um desafio clássico e crítico na automação de ambientes OpenShift em escala. A abordagem de "fire-and-forget" para upgrades não é sustentável, e a automação precisa ter inteligência para prever, identificar e corrigir problemas em tempo real.
 A sua ideia de usar um "listener" ou "trigger" via AAP é exatamente o caminho certo. Vamos estruturar uma solução robusta usando Ansible, que pode ser implementada como um Job Template ou, de forma mais avançada, um Workflow no Red Hat AAP.
 A estratégia se divide em três fases principais: Pré-Upgrade (Pre-Flight Checks), Durante o Upgrade (Monitoramento e Remediação Ativa), e Pós-Upgrade (Validação e Correção).
