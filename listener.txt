@@ -1,0 +1,30 @@
+Com certeza! Criar um modelo estruturado é uma excelente ideia para facilitar tanto o seu preenchimento quanto a minha interpretação. A chave é ser claro e conciso.
+Aqui está uma sugestão de modelo que você pode usar no seu Documento Google. Você pode copiar, colar e adaptar conforme suas necessidades:
+--- INÍCIO DO MEU CONTEXTO PERSONALIZADO ---
+DATA: (Ex: 27/05/2025)
+1. SOBRE MIM HOJE/EM GERAL:
+* Humor/Estado de Espírito: (Ex: Animado, Focado, Buscando inspiração, Um pouco cansado)
+* Objetivo Principal da Conversa de Hoje: (Ex: Brainstorming para projeto X, Aprender sobre Y, Organizar tarefas, Conversa leve e descontraída, Resolver dúvida específica sobre Z)
+* Tom de Conversa Preferido: (Ex: Informal e amigável, Direto e objetivo, Detalhado e explicativo, Criativo e divertido)
+2. INTERESSES E FOCOS PRINCIPAIS (Geral ou para Hoje):
+* Tópicos de Interesse Recorrentes/Atuais: (Ex: Inteligência Artificial, Culinária, História, Tecnologia, Desenvolvimento Pessoal)
+* Projetos em Andamento (se relevante para a conversa): (Ex: "Artigo sobre [tema]", "Planejamento de [evento/viagem]", "Estudo de [assunto]")
+* Informações/Temas que quero EVITAR hoje (se houver): (Ex: Notícias negativas, Assuntos muito técnicos)
+3. INFORMAÇÕES ADICIONAIS RELEVANTES (Opcional):
+* Lembretes para mim (usuário): (Ex: "Não esquecer de perguntar sobre X", "Manter o foco em Y")
+* Contexto Específico do Dia: (Ex: "Tenho uma reunião importante à tarde", "Acabei de ler um livro sobre Z e gostaria de discutir", "Estou com pouco tempo hoje")
+4. COMO VOCÊ (GEMINI) PODE ME AJUDAR MELHOR HOJE:
+* Tipo de Assistência Desejada: (Ex: Gerar ideias, Fornecer informações factuais, Ajudar a estruturar um texto, Oferecer diferentes perspectivas, Revisar algo que escrevi, Simplesmente conversar)
+* Restrições ou Preferências Específicas para suas Respostas: (Ex: "Prefiro respostas mais curtas/longas", "Gostaria de exemplos práticos", "Evite jargões")
+--- FIM DO MEU CONTEXTO PERSONALIZADO ---
+Por que essa estrutura pode funcionar bem:
+ * Delimitadores Claros: As linhas --- INÍCIO --- e --- FIM --- me ajudam a identificar exatamente qual parte do seu texto é o contexto personalizado.
+ * Tópicos Definidos: Os cabeçalhos (Ex: SOBRE MIM HOJE/EM GERAL:) e os sub-tópicos com **negrito** organizam a informação de forma lógica, facilitando a minha análise.
+ * Exemplos Práticos: Os exemplos entre parênteses (Ex: ...) te dão uma ideia de como preencher cada campo.
+ * Simplicidade: Você só precisa preencher as informações que forem relevantes para o dia ou para a conversa que quer ter. Não precisa preencher tudo sempre.
+ * Flexibilidade: Sinta-se à vontade para adicionar, remover ou modificar seções conforme suas necessidades evoluírem.
+Como usar:
+ * Copie este modelo para o seu Documento Google.
+ * Antes de iniciar nossa conversa diária, atualize as informações relevantes nele.
+ * Copie todo o texto (desde --- INÍCIO --- até --- FIM ---) e cole na nossa janela de chat como sua primeira mensagem.
+O que você acha desta sugestão? Podemos ajustá-la se tiver outras ideias!
