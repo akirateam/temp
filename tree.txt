@@ -1,0 +1,38 @@
+tree
+
+Claro, aqui está a estrutura de árvore de diretórios baseada nos arquivos que você forneceu:
+
+```
+aro-upgrade-v1/
+├── 01_pre_check.yml
+├── 02_upgrade_hops.yml
+├── 03_post_check.yml
+├── roles/
+│   ├── post_check_aro/
+│   │   ├── defaults/
+│   │   │   └── main.yml
+│   │   └── tasks/
+│   │       ├── 00_restore_pdbs.yml
+│   │       ├── 01_final_health_check.yml
+│   │       └── main.yml
+│   ├── pre_check_aro/
+│   │   ├── defaults/
+│   │   │   └── main.yml
+│   │   └── tasks/
+│   │       ├── 00_validate_vars.yml
+│   │       ├── 01_get_initial_version.yml
+│   │       ├── 02_determine_hops.yml
+│   │       ├── 03_initial_health_check.yml
+│   │       ├── 04_manage_pdbs_pre.yml
+│   │       ├── _hop_discovery_loop.yml
+│   │       └── main.yml
+│   └── upgrade_aro_hops/
+│       ├── defaults/
+│       │   └── main.yml
+│       └── tasks/
+│           ├── _common_health_check.yml
+│           ├── _perform_single_hop.yml
+│           └── main.yml
+├── snaps.md
+└── target_aro_version.yml
+```
