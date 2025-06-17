@@ -1,0 +1,35 @@
+<%@ Page Language="C#" AutoEventWireup="true" CodeBehind="WebForm1.aspx.cs "prjAspnetWebApplicationVazio.WebForm1" %>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head runat="server">
+    <title></title>
+</head>
+<body>
+    <form id="form1" runat="server">
+        <div>Din Din Fintech
+            <div></div>
+            <div>Olá [DropDownList1]. Ag. 1234 CC. 00012345-6 [btnAtualizarCliente]
+                <div>-</div>
+            </div>
+        </div>
+        <div>Recomendação Open Finance
+            <div>[GridView1]</div>
+            <div>-</div>
+        </div>
+        <div>Recomendação Popularidade
+            <div>[GridView2]</div>
+            <div>-</div>
+        </div>
+        <div>Está curtindo os produtos da Din Din?
+            <div>
+                [ImageButton1 Cartão de Crédito]&nbsp;
+                [ImageButton2 Conta Corrente]&nbsp;
+                [ImageButton3 Crédito Pessoal]<br />
+                [ImageButton4 Poupança]&nbsp;;
+                [ImageButton5 Renda Fixa]&nbsp;;
+                [ImageButton6 Renda Variável]</div>
+        </div>
+        <div>[lblResultado]</div>
+    </form>
+</body>
+</html>

@@ -1,0 +1,13 @@
+	protected void btnAtualizarCliente_Click(object sender, EventArgs e)
+        {
+            //gridview recomendacao
+            string strClienteMaisSimilar = objDados.consultarClienteMaisSimilar(DropDownList1.Text);
+            //gridview recomendacao
+            DataTable dt = objDados.listarRecomendacaoOF(DropDownList1.Text, strClienteMaisSimilar);
+            GridView1.DataSource = dt;
+            GridView1.DataBind();
+            //gridview popularidade
+            dt = objDados.listarProdutosPopularidade();
+            GridView2.DataSource = dt;
+            GridView2.DataBind();
+        }

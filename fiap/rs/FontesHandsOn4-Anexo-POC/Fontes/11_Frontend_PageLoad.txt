@@ -1,0 +1,19 @@
+using System.Data;
+Dados objDados = new Dados();
+protected void Page_Load(object sender, EventArgs e) {
+if (Page.IsPostBack == false) {
+//dropdown cliente
+DataTable dt = objDados.listarClientes();
+DropDownList1.DataSource = dt;
+DropDownList1.DataTextField = "nomeCliente";
+DropDownList1.DataBind();
+//usuário mais similar
+string strClienteMaisSimilar = objDados.consultarClienteMaisSimilar(DropDownList1.Text);
+//gridview recomendacao
+dt = objDados.listarRecomendacaoOF(DropDownList1.Text, strClienteMaisSimilar);
+GridView1.DataSource = dt;
+GridView1.DataBind();
+//gridview popularidade
+dt = objDados.listarProdutosPopularidade();
+GridView2.DataSource = dt;
+GridView2.DataBind(); } }

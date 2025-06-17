@@ -1,0 +1,85 @@
+		protected void ImageButton1_Click(object sender, ImageClickEventArgs e)
+        {
+            if (ImageButton1.ImageUrl == "~/10_likeNao.png")
+            {
+                ImageButton1.ImageUrl = "~/10_likeSim.png";
+                objDados.IncrementarLike("Cartão de Crédito");
+            }
+            else
+            {
+                ImageButton1.ImageUrl = "~/10_likeNao.png";
+                objDados.DecrementarLike("Cartão de Crédito");
+            }
+
+        }
+
+        protected void ImageButton2_Click(object sender, ImageClickEventArgs e)
+        {
+            if (ImageButton2.ImageUrl == "~/10_likeNao.png")
+            {
+                ImageButton2.ImageUrl = "~/10_likeSim.png";
+                objDados.IncrementarLike("Conta Corrente");
+            }
+            else
+            {
+                ImageButton2.ImageUrl = "~/10_likeNao.png";
+                objDados.DecrementarLike("Conta Corrente");
+            }
+
+        }
+
+        protected void ImageButton3_Click(object sender, ImageClickEventArgs e)
+        {
+            if (ImageButton3.ImageUrl == "~/10_likeNao.png")
+            {
+                ImageButton3.ImageUrl = "~/10_likeSim.png";
+                objDados.IncrementarLike("Crédito Pessoal");
+            }
+            else
+            {
+                ImageButton3.ImageUrl = "~/10_likeNao.png";
+                objDados.DecrementarLike("Crédito Pessoal");
+            }
+        }
+
+        protected void ImageButton4_Click(object sender, ImageClickEventArgs e)
+        {
+            if (ImageButton4.ImageUrl == "~/10_likeNao.png")
+            {
+                ImageButton4.ImageUrl = "~/10_likeSim.png";
+                objDados.IncrementarLike("Poupança");
+            }
+            else
+            {
+                ImageButton4.ImageUrl = "~/10_likeNao.png";
+                objDados.DecrementarLike("Poupança");
+            }
+        }
+
+        protected void ImageButton5_Click(object sender, ImageClickEventArgs e)
+        {
+            if (ImageButton5.ImageUrl == "~/10_likeNao.png")
+            {
+                ImageButton5.ImageUrl = "~/10_likeSim.png";
+                objDados.IncrementarLike("Renda Fixa");
+            }
+            else
+            {
+                ImageButton5.ImageUrl = "~/10_likeNao.png";
+                objDados.DecrementarLike("Renda Fixa");
+            }
+        }
+
+        protected void ImageButton6_Click(object sender, ImageClickEventArgs e)
+        {
+            if (ImageButton6.ImageUrl == "~/10_likeNao.png")
+            {
+                ImageButton6.ImageUrl = "~/10_likeSim.png";
+                objDados.IncrementarLike("Renda Variável");
+            }
+            else
+            {
+                ImageButton6.ImageUrl = "~/10_likeNao.png";
+                objDados.DecrementarLike("Renda Variável");
+            }
+        }

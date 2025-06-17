@@ -1,0 +1,79 @@
+Aba: Premissas de Receitas
+Item,Ano 1,Ano 2 (Lançamento),Ano 3,Ano 4,Ano 5,Unidade/Observação
+Produto 1: Jogo Nations - PC/Console,,,,,,
+Preço Médio por Unidade (R$),0,149.90,149.90,149.90,149.90,
+Volume de Vendas Projetado,0,10000,20000,15000,10000,Unidades
+Receita Bruta Anual (R$),0.00,1499000.00,2998000.00,2248500.00,1499000.00,Calculado
+Impostos sobre Vendas (Estimativa 10%),0.00,149900.00,299800.00,224850.00,149900.00,Percentual da Receita Bruta
+Comissões de Plataformas (Estimativa 30%),0.00,449700.00,899400.00,674550.00,449700.00,Percentual da Receita Bruta
+Receita Líquida Anual (R$),0.00,899400.00,1798800.00,1349100.00,899400.00,Calculado
+,,,,,,
+Aba: Folha de Pagamentos (Equipe Enxuta IA-Powered)
+Cargo,Nº de Pessoas,Salário Mensal Bruto (R$),Encargos (Estimativa 40%),Custo Mensal Total por Pessoa (R$),Custo Anual Total (R$),Observação
+Engenheiro de IA,1,10000.00,4000.00,14000.00,168000.00,
+Designer/Artista (Curador IA),1,8000.00,3200.00,11200.00,134400.00,
+Desenvolvedor Geral/Gerente Projeto,1,9000.00,3600.00,12600.00,151200.00,
+Total Folha de Pagamento Anual,,,,-,453600.00,
+,,,,,,
+Aba: Premissas de Despesas
+Tipo de Despesa,Ano 1,Ano 2 (Lançamento),Ano 3,Ano 4,Ano 5,Observação
+Marketing e Publicidade,,,,,,
+Campanha Pré-Lançamento,20000.00,0.00,0.00,0.00,0.00,
+Campanha de Lançamento,0.00,70000.00,0.00,0.00,0.00,
+Marketing Contínuo,0.00,30000.00,40000.00,30000.00,20000.00,
+Custos Operacionais,,,,,,
+Servidores de Jogo (Estimativa),0.00,12000.00,24000.00,18000.00,12000.00,Cresce com jogadores
+Custos de API/Ferramentas de IA (Gemini),10000.00,15000.00,20000.00,15000.00,10000.00,Estimativa
+Licenças de Software (Adobe, Engine, etc.),5000.00,5000.00,5000.00,5000.00,5000.00,Anual
+Suporte ao Cliente (Ferramentas/Terceirização),0.00,6000.00,8000.00,7000.00,6000.00,
+Despesas Administrativas,,,,,,
+Contabilidade/Jurídico,6000.00,6000.00,6000.00,6000.00,6000.00,Estimativa mensal R$500
+Aluguel Escritório (Modelo Remoto/Pequeno),0.00,0.00,0.00,0.00,0.00,Considerado remoto inicialmente
+Outras Despesas (Luz, Internet, etc. se houver),1000.00,2000.00,2000.00,2000.00,2000.00,Estimativa
+Total Despesas Anuais,42000.00,146000.00,105000.00,83000.00,61000.00,Excluindo folha e impostos/comissões
+,,,,,,
+Aba: Premissas de Investimento
+Item,Ano 1,Ano 2,Ano 3,Ano 4,Ano 5,Observação
+Investimento Inicial (CAPEX),,,, , ,
+Desenvolvimento do Jogo (GDD),70000.00,0.00,0.00,0.00,0.00,Parte do R$100k GDD
+Hardware Essencial,10000.00,0.00,0.00,0.00,0.00,Parte do R$100k GDD
+Marketing Pré-Lançamento (já em Despesas), (incluso), , , , , Ver Aba Despesas (R$20k)
+Custos API/Ferramentas IA Ano 1 (já em Despesas), (incluso), , , , , Ver Aba Despesas (R$10k)
+Total Investimento Inicial (CAPEX),80000.00,0.00,0.00,0.00,0.00,Valor base do GDD menos custos já em despesas
+Necessidade de Capital de Giro Projetada,A calcular,A calcular,A calcular,A calcular,A calcular,Pelo Fluxo de Caixa
+Aportes de Capital (se necessário),A definir,A definir,A definir,A definir,A definir,
+,,,,,,
+Aba: Projeção Financeira Simplificada (Exemplo)
+Item,Ano 1,Ano 2 (Lançamento),Ano 3,Ano 4,Ano 5
+Receita Líquida Anual (R$),0.00,899400.00,1798800.00,1349100.00,899400.00
+(-) Custos Variáveis (Impostos+Comissões já deduzidos na Rec. Líquida),0.00,0.00,0.00,0.00,0.00
+Lucro Bruto (Receita Líquida),0.00,899400.00,1798800.00,1349100.00,899400.00
+(-) Despesas Operacionais Fixas,,,,
+Folha de Pagamento Anual,453600.00,453600.00,453600.00,453600.00,453600.00
+Outras Despesas Anuais (Marketing, Operacional, Adm),42000.00,146000.00,105000.00,83000.00,61000.00
+EBITDA (Lucro Antes Juros, Impostos, Deprec. Amort.),-495600.00,299800.00,1240200.00,812500.00,384800.00
+(-) Depreciação/Amortização (Jogo - R$80k em 4 anos),20000.00,20000.00,20000.00,20000.00,0.00,Linear
+Lucro Antes IR (LAIR),-515600.00,279800.00,1220200.00,792500.00,384800.00
+(-) IR/CSLL (Estimativa 15% sobre LAIR positivo),0.00,41970.00,183030.00,118875.00,57720.00,
+Lucro Líquido,-515600.00,237830.00,1037170.00,673625.00,327080.00
+,,,,
+Fluxo de Caixa Simplificado (Exemplo),,,,
+Saldo Inicial,0.00,-415600.00,-177770.00,859400.00,1533025.00
+(+) Entradas Operacionais (Receita Líquida),0.00,899400.00,1798800.00,1349100.00,899400.00
+(+) Aportes de Capital (Ex: Investimento Inicial GDD),100000.00,0.00,0.00,0.00,0.00,Considerando o valor do GDD como aporte
+(-) Saídas Operacionais (Folha + Outras Despesas),495600.00,599600.00,558600.00,536600.00,514600.00
+(-) Investimentos (CAPEX - Jogo),80000.00,0.00,0.00,0.00,0.00,Não considera o aporte aqui
+(-) Impostos (IR/CSLL),0.00,41970.00,183030.00,118875.00,57720.00
+Saldo Final de Caixa,-475600.00,-157770.00,957170.00,1553025.00,1860105.00,ATENÇÃO: Saldo inicial Ano 1 = 0. Saldo final Ano 1 = Aporte - Despesas - Investimento. Saldo inicial Ano 2 = Saldo Final Ano 1.
+Necessidade de Capital de Giro (Negativo indica necessidade),-475600.00,-157770.00,Positivo,Positivo,Positivo,Indica necessidade de aporte maior que R$100k no Ano 1
+,,,,,,
+Aba: Resumo e Indicadores Chave
+Indicador,Ano 1,Ano 2,Ano 3,Ano 4,Ano 5
+Receita Líquida (R$),0.00,899400.00,1798800.00,1349100.00,899400.00
+EBITDA (R$),-495600.00,299800.00,1240200.00,812500.00,384800.00
+Margem EBITDA (%),N/A,33.33%,68.95%,60.22%,42.78%
+Lucro Líquido (R$),-515600.00,237830.00,1037170.00,673625.00,327080.00
+Margem Líquida (%),N/A,26.44%,57.66%,49.93%,36.37%
+Saldo Final de Caixa (R$),-475600.00,-157770.00,957170.00,1553025.00,1860105.00,"Considerando aporte inicial de R$100k no Ano 1 e investimento CAPEX de R$80k saindo desse aporte"
+Payback Simples do Investimento (R$100k),-,Ano 2/Ano 3,Ano 2/Ano 3,Ano 2/Ano 3,Ano 2/Ano 3,"Payback ocorre quando o Lucro Líquido Acumulado ou Fluxo de Caixa Acumulado Positivo supera o investimento inicial. Com Lucro Líquido: Ano 1 (-515k), Ano 2 (237k, Acum: -277k), Ano 3 (1037k, Acum: 759k). Payback entre Ano 2 e Ano 3."
+Observação Importante:,Os valores são estimativas e dependem fortemente das premissas de vendas, custos de equipe e marketing.,,,,"O fluxo de caixa indica que o investimento inicial de R$100k não cobre o déficit do Ano 1. Seria necessário um aporte maior ou redução drástica de custos no Ano 1."

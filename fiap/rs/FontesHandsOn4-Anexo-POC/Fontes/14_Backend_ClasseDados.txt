@@ -1,0 +1,105 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+using System.Data;
+using System.Data.SqlClient;
+
+namespace POC_SR
+{
+    public class Dados
+    {
+        SqlConnection con; //objeto responsável pela conexão com a BD
+        SqlCommand cmd; //objeto que implementa o comando SQL e associa à conexão
+        public DataTable listarClientes()
+        {
+            conectar(); //Conecta na BD do SQL-Server
+            con.Open(); //Abre a conexão com a BD
+            string sql = "SELECT nomeCliente FROM tbCliente"; //Busca os clientes da tabela tbCliente
+            SqlCommand adoCmd = new SqlCommand(sql, con); //Associa o comando SQL com a conexão
+            SqlDataAdapter da = new SqlDataAdapter(adoCmd); //Cria um adaptador associado ao comando SQL, esse adaptador é necessário para preencher os dados retornados no comando SQL para um objeto DataTable
+            DataTable dt = new DataTable(); //Cria um objeto DataTable para receber o resultado do comando SQL
+            da.Fill(dt); //Preenche o DataTable utilizando o método da.Fill do objeto SqlDataAdapter 
+            return dt; //Retorna o objeto dt (DataTable preenchido)
+        }
+
+        private void conectar()
+        {
+            con = new SqlConnection("Data Source=CPX-8F030SWZ5XN\\SQLEXPRESS01;Initial Catalog = DBDINDIN; Integrated Security = True");
+        }
+
+        //Backend – classe Dados
+        public string consultarClienteMaisSimilar(string clienteOrigem)
+        {
+            conectar();
+            con.Open();
+            string sql = "select top 1 a.* from tbClienteSimilaridade a where a.nomeClienteOrigem = '" + clienteOrigem + "' order by similaridade desc;"; //Seleciona 1 registro da tabela que armazena a distância entre os clientes, passando como critério o cliente de origem (selecionado na tela), ordenado pela maior similaridade
+            SqlCommand adoCmd = new SqlCommand(sql, con);
+            SqlDataReader adoDR = adoCmd.ExecuteReader(); //Cria um objeto DataReader para armazenar o resultado da BD
+            if (adoDR.HasRows)
+            {//Se retornou algum registro
+                if (adoDR.Read()) //Posiciona no registro retornado
+                    return adoDR["nomeClienteDestino"].ToString(); //Retorna o nome do cliente obtido
+                else
+                    return "";
+            }
+            else
+                return "";
+        }
+
+        public DataTable listarRecomendacaoOF(string nomeClienteOrigem, string nomeClienteDestino)
+        {
+            conectar();
+            con.Open();
+            //Seleciona todos os campos da tabela tbClienteProduto onde o nomeCliente = nomeClienteDestino (mais similar) e o produto não exista para o cliente de origem
+            string sql = "select b.* from tbCliente a, tbClienteProduto b, tbProduto c ";
+            sql += "where a.nomeCliente = b.nomeCliente and b.nomeProduto = c.nomeProduto and b.nomeCliente = '" + nomeClienteDestino + "' ";
+            sql += "and b.nomeProduto not in (select b.nomeProduto from tbCliente a, tbClienteProduto b, tbProduto c ";
+            sql += "where a.nomeCliente = b.nomeCliente and b.nomeProduto = c.nomeProduto ";
+            sql += "and b.nomeCliente = '" + nomeClienteOrigem + "')";
+            SqlCommand adoCmd = new SqlCommand(sql, con);
+            SqlDataAdapter da = new SqlDataAdapter(adoCmd);
+            DataTable dt = new DataTable();
+            da.Fill(dt);
+            return dt;
+        }
+
+        //Backend
+        public DataTable listarProdutosPopularidade()
+        {
+            conectar();
+            con.Open();
+            //Lista os produtos da tbProduto em ordem da maior para a menor popularidade
+            string sql = "select a.* from tbProduto a order by a.quantidadeLikes desc;";
+            SqlCommand adoCmd = new SqlCommand(sql, con);
+            SqlDataAdapter da = new SqlDataAdapter(adoCmd);
+            DataTable dt = new DataTable();
+            da.Fill(dt);
+            return dt;
+        }
+
+        //Backend
+        public bool IncrementarLike(string produto)
+        {
+            conectar();
+            cmd = new SqlCommand("UPDATE tbProduto SET quantidadeLikes = quantidadeLikes + 1 WHERE nomeProduto = '" + produto + "'", con);
+            con.Open();
+            cmd.ExecuteNonQuery();
+            con.Close();
+            return true;
+        }
+
+        //Backend
+        public bool DecrementarLike(string produto)
+        {
+            conectar();
+            cmd = new SqlCommand("UPDATE tbProduto SET quantidadeLikes = quantidadeLikes - 1 WHERE nomeProduto = '" + produto + "'", con);
+            con.Open();
+            cmd.ExecuteNonQuery();
+            con.Close();
+            return true;
+        }
+
+
+    }
+}
