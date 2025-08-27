@@ -1,0 +1,20 @@
+oc get deployment -n openshift-authentication-operator
+
+- op: add
+  path: /spec/overrides/-
+  value:
+    group: apps
+    kind: Deployment
+    name: authentication-operator
+    namespace: openshift-authentication-operator
+    unmanaged: true
+
+oc patch clusterversion version --type='json' -p="[$(cat patch-unmanage-auth.yaml)]"
+
+oc edit route oauth-openshift -n openshift-authentication
+
+spec:
+  # ... outras configurações da rota ...
+  tls:
+    insecureEdgeTerminationPolicy: Redirect
+    termination: edge
