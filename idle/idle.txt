@@ -1,0 +1,53 @@
+Com certeza! Excelente iniciativa. Criar um pitch de 5 minutos é a melhor forma de demonstrar o valor do trabalho que fizemos. A estrutura que você pensou, baseada na imagem, é perfeita para contar essa história.
+Vamos detalhar o que colocar em cada etapa para criar uma apresentação de alto impacto, usando o template e mantendo o foco no tempo.
+Estrutura do Pitch (5 Minutos)
+Aqui está um roteiro, slide a slide, baseado na sua ideia.
+Slide 1: Título (Abertura - 15 segundos)
+ * Título: Otimização de Custos em ARO com Hibernação Automatizada de Ambientes
+ * Subtítulo: Uma iniciativa para redução de desperdício de recursos cloud em horários ociosos.
+ * Apresentadores: Seus nomes
+ * Data: 18 de setembro de 2025
+Slide 2: O Desafio (Problema - 45 segundos)
+ * O que falar: "Nossos ambientes não-produtivos no ARO (Azure Red Hat OpenShift) possuem dezenas de nós de computação que, por padrão, rodam 24 horas por dia, 7 dias por semana."
+ * "Grande parte desse tempo, especialmente durante madrugadas e fins de semana, esses ambientes ficam completamente ociosos, sem receber tráfego ou serem utilizados para desenvolvimento e testes."
+ * "Esse tempo de ociosidade representa um custo significativo e um desperdício de recursos na nuvem Azure, impactando diretamente nosso Opex."
+Slide 3: O Objetivo (Meta - 30 segundos)
+ * O que falar: "Nosso objetivo foi claro: implementar uma solução para desligar de forma segura e automática as aplicações em ambientes não-produtivos durante os períodos de baixa ou nenhuma utilização."
+ * "A meta era criar um processo reversível, confiável e totalmente automatizado, começando pelos fins de semana, para gerar uma economia imediata nos custos de computação."
+Slide 4: A Solução (Como resolvemos - 45 segundos)
+ * O que falar: "Utilizamos uma combinação de ferramentas nativas do OpenShift com o poder de orquestração do Ansible, nossa plataforma de automação padrão."
+ * "A solução consiste em dois playbooks principais:"
+   * scale-down-workers: Identifica a carga de trabalho real e hiberna as aplicações de forma inteligente.
+   * scale-up-workers: Reativa as aplicações e, crucialmente, limpa as configurações de hibernação para garantir que o HPA (Horizontal Pod Autoscaler) volte a funcionar corretamente.
+ * "Todo o processo é agendado e gerenciado pelo AAP (Ansible Automation Platform), garantindo execução sem intervenção manual."
+Slide 5: Demonstração Rápida (Hands-on) (Prova - 60 segundos)
+ * Sua ideia aqui é perfeita! Grave um vídeo curto (45-60 segundos) e acelere as partes de espera. Não faça ao vivo.
+ * Roteiro do Vídeo:
+   * Tela 1 (App): Mostre uma aplicação de exemplo funcionando em um navegador.
+   * Tela 2 (Terminal): Execute o comando oc idle --all -n <seu-namespace-dev>.
+   * Tela 3 (Console OpenShift): Mostre os pods do deployment sendo terminados (escalando para 0).
+   * Tela 1 (App): Atualize a página e mostre que a aplicação está fora do ar.
+   * Tela 2 (Terminal): Execute o comando oc scale deployment,dc,statefulset --all --replicas=1 -n <seu-namespace-dev>.
+   * Tela 3 (Console OpenShift): Mostre os pods subindo novamente.
+   * Tela 1 (App): Atualize a página e mostre a aplicação funcionando de novo.
+ * Narração: "Este é o processo que automatizamos. Com um comando, hibernamos a aplicação. Com outro, a reativamos. Nossos scripts orquestram isso de forma inteligente e em escala."
+Slide 6: Automação e Piloto (Implementação - 30 segundos)
+ * O que falar: "Transformamos esse processo manual em dois Job Templates no AAP."
+ * "O piloto já está configurado e agendado para iniciar neste fim de semana."
+ * Agendamento do Piloto:
+   * Scale-Down: Sábado, 00:00.
+   * Scale-Up: Segunda-feira, 06:00.
+ * "Isso garante que os ambientes fiquem desativados durante todo o período ocioso do fim de semana."
+Slide 7: Resultados Projetados (Impacto no Negócio - 45 segundos)
+ * O que falar: "A automação ficará ativa por 12 horas por semana (6h no Sábado e 6h no Domingo)."
+ * "Com base no tempo de atividade semanal (168h), estamos projetando uma redução de aproximadamente 7% nos custos de computação dos nós de workers para os ambientes no piloto."
+ * Benefícios Adicionais:
+   * Redução da pegada de carbono.
+   * Criação de um padrão de automação de FinOps que pode ser expandido para outros ambientes e horários (como madrugadas durante a semana).
+Slide 8: Perguntas e Próximos Passos (Encerramento - 30 segundos)
+ * Próximos Passos:
+   *      * Monitorar os resultados de custo e performance do piloto.
+   *      * Expandir a automação para os ambientes de QA e Homologação.
+   *      * Avaliar a implementação em horários ociosos durante a semana.
+ * Agradecimento e abertura para perguntas.
+Seguindo este roteiro, você contará uma história coesa, do problema ao resultado, de forma profissional e dentro do tempo estipulado. Boa sorte na apresentação!
