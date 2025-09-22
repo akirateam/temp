@@ -2,3 +2,6 @@
 for pod in $(oc get pods -n psib-core-p -l app=psib-srv-envia-pix-sadif -o name); do \
   oc annotate $pod -n psib-core-p cluster-autoscaler.kubernetes.io/safe-to-evict=true --overwrite; \
 done
+
+oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.volumes[]?.emptyDir != null) | "\(.metadata.namespace)\t\(.metadata.name)"'
+
