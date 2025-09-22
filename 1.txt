@@ -5,3 +5,4 @@ done
 
 oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.volumes[]?.emptyDir != null) | "\(.metadata.namespace)\t\(.metadata.name)"'
 
+oc get nodes -l node-role.kubernetes.io/worker --no-headers -o custom-columns="NODE:.metadata.name,DISABLED:.metadata.annotations.cluster-autoscaler\.kubernetes\.io/scale-down-disabled"
