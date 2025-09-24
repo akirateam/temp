@@ -30,4 +30,3 @@ Avaliar a expansão do período de hibernação ou a aplicação em outros cená
 Ex: Projeção diária no mesmo formato fora do horário comercial (8hrs)
 Sugestão de Gráfico Principal (com a nova projeção diária e texto corrigido):
 `
-https://docs.google.com/presentation/d/11yJjyp69NZoWh_rTQzl45XlZSinKiV8AJC0qzsO2ECk/edit?usp=drivesdk
