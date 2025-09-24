@@ -6,3 +6,28 @@ done
 oc get pods --all-namespaces -o json | jq -r '.items[] | select(.spec.volumes[]?.emptyDir != null) | "\(.metadata.namespace)\t\(.metadata.name)"'
 
 oc get nodes -l node-role.kubernetes.io/worker --no-headers -o custom-columns="NODE:.metadata.name,DISABLED:.metadata.annotations.cluster-autoscaler\.kubernetes\.io/scale-down-disabled"
+
+
+Redução de Custos de Clusters ARO: Projeto Piloto de Hibernação Automatizada
+Objetivo: Otimizar recursos e reduzir custos operacionais de clusters ARO através de hibernação automatizada em horários não comerciais (8hrs) aos finais de semana.
+Clusters Piloto: arohoplatfupi11 e aroplatfupi12
+Cenário Anterior (Sem Hibernação - Diário) 1. Custos Diários: * R$ 6.808,00 (custo diário sem otimização)
+2. Utilização de Recursos: * Aplicações de Negócios: 1300 * Worker Nodes (Apps): 26 (32 cores / 128GB Memória cada) * Total: 832 cores e 3.3TB de RAM
+Cenário Atual (Com Hibernação - 8h/dia em Horário Não Comercial) 1. Redução de Custos Diária: * R$ 704,00 (por dia hibernado)
+2. Otimização de Recursos Durante a Hibernação: * Aplicações de Negócios Reduzidas em 87,7% (de 1300 para 160) * Worker Nodes Reduzidos em 38,5% (de 26 para 16) * Mantendo: 512 cores e 2TB de RAM ativos para suporte essencial.
+Impacto Financeiro e Ganhos da Automação (Destaque Bradesco Vermelho)
+Redução de Custo Diária: R$ 704,00
+Projeção Anual de Economia (Considerando uso DIÁRIO - 365 dias):
+365 dias * R$ 704,00 = R$ 256.960,00
+Benefícios Estratégicos:
+Eficiência Operacional: Otimização significativa de recursos em horários de baixa demanda.
+Retorno sobre o Investimento (ROI) Imediato: Economia tangível desde o início do piloto.
+Automação Inteligente: Geração de valor sem impacto em operações críticas de negócio.
+Sustentabilidade: Contribuição para metas de eficiência energética.
+Próximos Passos:
+Escalar a hibernação automatizada para outros clusters ARO, replicando o sucesso.
+Avaliar a expansão do período de hibernação ou a aplicação em outros cenários de baixa utilização.
+Ex: Projeção diária no mesmo formato fora do horário comercial (8hrs)
+Sugestão de Gráfico Principal (com a nova projeção diária e texto corrigido):
+`
+
