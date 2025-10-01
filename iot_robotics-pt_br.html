@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Projeto Final | Robótica e IoT | Monitoramento Inteligente</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .flow-line {
+            position: absolute;
+            background-color: #4f46e5;
+            z-index: 0;
+        }
+        .flow-dot {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background-color: #818cf8;
+            border-radius: 50%;
+            border: 2px solid #4f46e5;
+            z-index: 5;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.9); box-shadow: 0 0 0 0 rgba(129, 140, 248, 0.7); }
+            70% { transform: scale(1.1); box-shadow: 0 0 0 10px rgba(129, 140, 248, 0); }
+            100% { transform: scale(0.9); box-shadow: 0 0 0 0 rgba(129, 140, 248, 0); }
+        }
+        pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200">
+    <div class="container mx-auto p-4 md:p-8">
+        
+        <!-- Header -->
+        <header class="text-center mb-10 border-b border-gray-700 pb-6">
+            <h1 class="text-4xl font-bold text-indigo-400">Projeto Final: Robótica e IoT</h1>
+            <p class="text-xl text-gray-400 mt-2">Solução de Monitoramento Inteligente para Indústria 4.0</p>
+        </header>
+
+        <!-- Main Content Grid -->
+        <main class="grid grid-cols-1 gap-8">
+
+            <!-- Introduction Section -->
+            <section class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-2xl font-semibold text-indigo-400 mb-4 flex items-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-3"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+                    1. Introdução ao Estudo de Caso
+                </h2>
+                <p class="text-gray-300 leading-relaxed">
+                    Este projeto atende à necessidade da empresa QuantumFinance de desenvolver uma solução para um marketplace de IoT voltado para a Indústria 4.0. O objetivo é criar um sistema de monitoramento inteligente para áreas de risco em ambientes industriais, como fornos, visando a prevenção de acidentes. A solução proposta é um sistema híbrido, combinando processamento na borda (edge) para respostas em tempo real e recursos de nuvem (cloud) para análise de dados e gerenciamento centralizado das 30 fábricas do cliente.
+                </p>
+            </section>
+            
+            <!-- Architecture Canvas Section -->
+            <section class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-2xl font-semibold text-indigo-400 mb-6 flex items-center">
+                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-3"><path d="M12 20V10"></path><path d="M18 20V4"></path><path d="M6 20V16"></path></svg>
+                    2. Canvas da Arquitetura Técnica
+                </h2>
+                <div class="relative p-4 md:p-8 bg-gray-900/50 rounded-lg min-h-[600px] lg:min-h-[700px]">
+                    <!-- Main containers for Edge and Cloud -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 h-full">
+                        
+                        <!-- Borda / Edge Column -->
+                        <div id="edge-col" class="border-2 border-dashed border-cyan-500/30 rounded-lg p-4 flex flex-col items-center justify-around">
+                            <h3 class="text-2xl font-bold text-cyan-400 mb-4 absolute top-4">BORDA (EDGE)</h3>
+                            <div class="w-full flex flex-col items-center gap-16 mt-12">
+                                <!-- Raspberry Pi -->
+                                <div id="raspberry" class="relative bg-gray-700/50 p-6 rounded-xl shadow-2xl w-full max-w-md border border-gray-600">
+                                    <h4 class="text-lg font-semibold text-center text-white mb-4">Gateway de IA (Raspberry Pi)</h4>
+                                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                                        <div class="bg-gray-800 p-3 rounded-lg"><span class="block text-cyan-300 font-bold">Módulo de Câmera</span><span class="text-xs text-gray-400">OpenCV</span></div>
+                                        <div class="bg-gray-800 p-3 rounded-lg"><span class="block text-cyan-300 font-bold">Detecção por IA</span><span class="text-xs text-gray-400">MobileNetSSD</span></div>
+                                        <div class="bg-gray-800 p-3 rounded-lg"><span class="block text-cyan-300 font-bold">Módulo de Comando</span><span class="text-xs text-gray-400">Lógica de Negócio</span></div>
+                                    </div>
+                                </div>
+                                <!-- Arduino -->
+                                <div id="arduino" class="relative bg-gray-700/50 p-6 rounded-xl shadow-2xl w-full max-w-md border border-gray-600">
+                                    <h4 class="text-lg font-semibold text-center text-white mb-4">Controlador P.I.D. (Arduino UNO)</h4>
+                                    <div class="flex justify-around text-center">
+                                        <div class="bg-gray-800 p-3 rounded-lg w-32"><span class="block text-cyan-300 font-bold">Sensor</span><span class="text-xs text-gray-400">DHT11 Temp.</span></div>
+                                        <div class="bg-gray-800 p-3 rounded-lg w-32"><span class="block text-cyan-300 font-bold">Atuador</span><span class="text-xs text-gray-400">Servo Motor</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Nuvem / Cloud Column -->
+                        <div id="cloud-col" class="border-2 border-dashed border-indigo-500/30 rounded-lg p-4 flex flex-col items-center justify-center">
+                            <h3 class="text-2xl font-bold text-indigo-400 mb-4 absolute top-4">NUVEM (CLOUD)</h3>
+                             <div id="blynk" class="relative bg-gray-700/50 p-6 rounded-xl shadow-2xl w-full max-w-md border border-gray-600 mt-12">
+                                <h4 class="text-lg font-semibold text-center text-white mb-4">Backend SaaS (Blynk)</h4>
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-center">
+                                    <div class="bg-gray-800 p-3 rounded-lg"><span class="block text-indigo-300 font-bold">Dashboard</span><span class="text-xs text-gray-400">Visão Central</span></div>
+                                    <div class="bg-gray-800 p-3 rounded-lg"><span class="block text-indigo-300 font-bold">Notificações</span><span class="text-xs text-gray-400">Alertas Push</span></div>
+                                    <div class="bg-gray-800 p-3 rounded-lg"><span class="block text-indigo-300 font-bold">Histórico de Dados</span><span class="text-xs text-gray-400">Análise Preditiva</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Flow lines and dots will be injected here by JS -->
+                </div>
+            </section>
+
+            <!-- Behavior and Responsibilities -->
+            <section class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-2xl font-semibold text-indigo-400 mb-4 flex items-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-3"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                    3. Comportamento e Responsabilidades
+                </h2>
+                <div class="space-y-6">
+                    <div>
+                        <h3 class="text-xl font-semibold text-cyan-400 mb-2">3.1 Borda (Edge Computing) - Ação Imediata e Autonomia</h3>
+                        <p class="text-gray-400 mb-3">Garante que as funções críticas de segurança operem com latência mínima e sem dependência da internet.</p>
+                        <ul class="list-disc list-inside space-y-2 pl-4 text-gray-300">
+                            <li><strong class="text-white">Controlador P.I.D. (Arduino):</strong> Atua como o controlador em tempo real da temperatura do forno, lendo o sensor DHT11 e ajustando um servo motor (simulando uma válvula de gás) para manter a estabilidade e prevenir falhas.</li>
+                            <li><strong class="text-white">Gateway de IA (Raspberry Pi):</strong> É o cérebro local. Captura vídeo (OpenCV), detecta a presença de pessoas (MobileNetSSD) e, caso o tempo de permanência exceda o limite, envia um comando de segurança ao Arduino (via I2C) e um alerta para a nuvem.</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 class="text-xl font-semibold text-indigo-400 mb-2">3.2 Nuvem (Cloud Computing) - Análise e Gestão Centralizada</h3>
+                         <p class="text-gray-400 mb-3">Utilizada para tarefas que se beneficiam de escalabilidade, armazenamento e acesso remoto.</p>
+                        <ul class="list-disc list-inside space-y-2 pl-4 text-gray-300">
+                            <li><strong class="text-white">Backend SaaS (Blynk):</strong> Atua como a plataforma central para gerenciar e visualizar dados das 30 fábricas. Recebe telemetria e alertas, armazena o histórico para análises preditivas e dispara notificações push para as equipes de emergência.</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+             <!-- Requirements Section -->
+            <section class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-2xl font-semibold text-indigo-400 mb-4 flex items-center">
+                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-3"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>
+                    4. Atendimento aos Requisitos
+                </h2>
+                <div class="grid md:grid-cols-3 gap-6">
+                    <div class="bg-gray-900/50 p-4 rounded-md">
+                        <h4 class="font-semibold text-lg text-white">Negócio</h4>
+                        <ul class="list-disc list-inside text-gray-300 mt-2 text-sm">
+                            <li>Previne problemas trabalhistas (monitora tempo).</li>
+                            <li>Reduz risco de quebra de equipamento (controle P.I.D.).</li>
+                        </ul>
+                    </div>
+                    <div class="bg-gray-900/50 p-4 rounded-md">
+                        <h4 class="font-semibold text-lg text-white">Tecnologia</h4>
+                        <ul class="list-disc list-inside text-gray-300 mt-2 text-sm">
+                            <li>Solução modular e reutilizável.</li>
+                            <li>Visão centralizada para 30 fábricas.</li>
+                            <li>Operação offline para funções críticas.</li>
+                        </ul>
+                    </div>
+                    <div class="bg-gray-900/50 p-4 rounded-md">
+                        <h4 class="font-semibold text-lg text-white">Usuário</h4>
+                        <ul class="list-disc list-inside text-gray-300 mt-2 text-sm">
+                            <li>Suporte a emergências com alertas em tempo real.</li>
+                            <li>Análise histórica para manutenção preditiva.</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Client Q&A Section -->
+            <section class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-2xl font-semibold text-indigo-400 mb-4 flex items-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-3"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                    5. Respostas às Incertezas do Cliente
+                </h2>
+                <div class="space-y-6">
+                    <div>
+                        <h4 class="text-lg font-semibold text-white">1. O uso de dispositivos conectados à internet é uma opção segura?</h4>
+                        <p class="text-gray-300 mt-1"><strong>Sim.</strong> A arquitetura minimiza a exposição ao processar dados sensíveis (vídeo) localmente na borda. Apenas metadados essenciais (ex: "pessoa detectada") são enviados para a nuvem através de canais seguros e criptografados (SDK do Blynk), garantindo a confidencialidade e integridade dos dados.</p>
+                    </div>
+                    <div>
+                        <h4 class="text-lg font-semibold text-white">2. Faz sentido uma solução somente baseada na arquitetura Arduino?</h4>
+                        <p class="text-gray-300 mt-1"><strong>Não.</strong> O Arduino é excelente para controle em tempo real (P.I.D.), mas não possui o poder computacional para processamento de vídeo, execução de modelos de IA ou gerenciamento de conexões seguras com a nuvem. A combinação do Arduino (para controle) com o Raspberry Pi (para inteligência) é a abordagem ideal e mais robusta.</p>
+                    </div>
+                    <div>
+                        <h4 class="text-lg font-semibold text-white">3. A maior parte da solução roda na borda ou na nuvem? E o impacto no Custo Total de Propriedade (TCO)?</h4>
+                        <p class="text-gray-300 mt-1">A solução adota um <strong>modelo híbrido equilibrado</strong>. Funções críticas e de baixa latência rodam na <strong>borda</strong>; funções de análise e gestão centralizada rodam na <strong>nuvem</strong>. Este modelo otimiza o TCO ao reduzir drasticamente os custos de tráfego de internet e armazenamento em nuvem, além de eliminar a necessidade de gerenciar infraestrutura complexa ao usar uma plataforma SaaS como o Blynk.</p>
+                    </div>
+                </div>
+            </section>
+
+             <!-- Conceptual Code Section -->
+            <section class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-2xl font-semibold text-indigo-400 mb-4 flex items-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mr-3"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                    6. Exemplos de Código (Conceitual)
+                </h2>
+                <p class="text-gray-400 mb-6">A seguir, são apresentados trechos de código conceituais para ilustrar a lógica que seria implementada em cada dispositivo de borda. Estes não são códigos de produção completos, mas servem para demonstrar a funcionalidade principal.</p>
+                <div class="grid md:grid-cols-2 gap-6 font-mono text-sm">
+                    <!-- Arduino Code -->
+                    <div class="bg-gray-900/50 p-4 rounded-md">
+                        <h4 class="font-semibold text-lg text-cyan-400 mb-2">Arduino - Controle P.I.D. (C++)</h4>
+                        <pre class="bg-gray-900 text-gray-300 p-4 rounded-lg overflow-x-auto"><code>#include &lt;PID_v1.h&gt;
+#include &lt;Servo.h&gt;
+#include &lt;DHT.h&gt;
+
+// Pinos
+#define DHTPIN 2
+#define SERVOPIN 9
+
+// Configurações P.I.D.
+double Setpoint, Input, Output;
+double Kp=2, Ki=5, Kd=1;
+PID myPID(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT);
+
+DHT dht(DHTPIN, DHT22);
+Servo valveServo;
+
+void setup() {
+  Setpoint = 150; // Temperatura alvo (ex: 150°C)
+  myPID.SetMode(AUTOMATIC);
+  valveServo.attach(SERVOPIN);
+  dht.begin();
+}
+
+void loop() {
+  Input = dht.readTemperature(); // Lê a temperatura atual
+  myPID.Compute(); // Calcula a ação de controle
+  
+  // Mapeia a saída do PID para o ângulo do servo
+  int servoAngle = map(Output, 0, 255, 0, 180);
+  valveServo.write(servoAngle); // Atua na válvula
+
+  // Lógica para receber comando de emergência via I2C (não mostrado)
+  delay(1000);
+}</code></pre>
+                    </div>
+                    <!-- Raspberry Pi Code -->
+                    <div class="bg-gray-900/50 p-4 rounded-md">
+                        <h4 class="font-semibold text-lg text-indigo-400 mb-2">Raspberry Pi - Gateway (Python)</h4>
+                        <pre class="bg-gray-900 text-gray-300 p-4 rounded-lg overflow-x-auto"><code>import BlynkLib
+import cv2
+# import smbus2 # Para comunicação I2C
+
+BLYNK_AUTH = 'SEU_TOKEN_BLYNK'
+blynk = BlynkLib.Blynk(BLYNK_AUTH)
+
+# Carregar modelo de IA (ex: MobileNetSSD)
+# net = cv2.dnn.readNetFromCaffe(...)
+
+def detect_person(frame):
+    # Lógica de detecção com o modelo de IA
+    # Retorna True se uma pessoa for detectada
+    return True # Simulação para exemplo
+
+def main():
+    cap = cv2.VideoCapture(0)
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+            
+        if detect_person(frame):
+            print("Pessoa detectada!")
+            # Enviar alerta para a nuvem
+            blynk.virtual_write(V1, 1) # V1 = Pino virtual do alerta
+            # Enviar comando de segurança para o Arduino via I2C
+            # bus.write_byte(ARDUINO_ADDR, 0x1)
+
+        # Enviar telemetria (ex: recebida do Arduino)
+        # temp = bus.read_byte(ARDUINO_ADDR)
+        # blynk.virtual_write(V0, temp) # V0 = Pino da temperatura
+        
+        blynk.run()
+
+if __name__ == "__main__":
+    main()</code></pre>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+
+        <footer class="text-center mt-10 pt-6 border-t border-gray-700">
+            <p class="text-gray-500">MBA em Data Science & Artificial Intelligence - FIAP</p>
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const canvas = document.querySelector('.relative.p-4');
+            if (!canvas) return;
+
+            const drawLine = (el1, el2, color, reverse = false, label = '') => {
+                const rect1 = el1.getBoundingClientRect();
+                const rect2 = el2.getBoundingClientRect();
+                const canvasRect = canvas.getBoundingClientRect();
+
+                const startX = rect1.left - canvasRect.left + rect1.width / 2;
+                const startY = rect1.top - canvasRect.top + (reverse ? 0 : rect1.height);
+                const endX = rect2.left - canvasRect.left + rect2.width / 2;
+                const endY = rect2.top - canvasRect.top + (reverse ? rect2.height : 0);
+                
+                let path;
+                const isCrossColumn = el1.closest('#edge-col') !== el2.closest('#edge-col');
+
+                if (isCrossColumn) {
+                    const fromX = rect1.left - canvasRect.left + rect1.width;
+                    const fromY = rect1.top - canvasRect.top + rect1.height / 2;
+                    const toX = rect2.left - canvasRect.left;
+                    const toY = rect2.top - canvasRect.top + rect2.height / 2;
+                    
+                    const midX = fromX + (toX - fromX) / 2;
+                    path = `<path d="M ${fromX} ${fromY} C ${midX} ${fromY}, ${midX} ${toY}, ${toX} ${toY}" stroke="${color}" stroke-width="2.5" fill="none" stroke-dasharray="8 4"/>`;
+
+                } else {
+                     path = `<path d="M ${startX} ${startY} L ${startX} ${startY + (endY - startY)/2} L ${endX} ${startY + (endY - startY)/2} L ${endX} ${endY}" stroke="${color}" stroke-width="2.5" fill="none" />`;
+                }
+
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('class', 'absolute top-0 left-0 w-full h-full pointer-events-none');
+                svg.style.zIndex = '1';
+                svg.innerHTML = path;
+                
+                if (label) {
+                    const labelDiv = document.createElement('div');
+                    labelDiv.className = 'absolute text-xs font-mono px-2 py-1 rounded';
+                    labelDiv.style.color = color;
+                    labelDiv.style.backgroundColor = 'rgba(17, 24, 39, 0.8)';
+                    labelDiv.style.border = `1px solid ${color}`;
+                    labelDiv.textContent = label;
+                    if (isCrossColumn) {
+                       labelDiv.style.left = `${fromX + (toX - fromX) / 2 - 40}px`;
+                       labelDiv.style.top = `${fromY + (toY - fromY) / 2 - 12}px`;
+                    } else {
+                        labelDiv.style.left = `${startX + 5}px`;
+                        labelDiv.style.top = `${startY + (endY-startY)/2 - 12}px`;
+                    }
+                    canvas.appendChild(labelDiv);
+                }
+
+                canvas.appendChild(svg);
+            };
+
+            const pi = document.getElementById('raspberry');
+            const arduino = document.getElementById('arduino');
+            const blynk = document.getElementById('blynk');
+
+            if (pi && arduino && blynk) {
+                drawLine(pi, arduino, '#06b6d4', false, 'Comandos I2C');
+                drawLine(arduino, pi, '#06b6d4', true, 'Telemetria');
+                drawLine(pi, blynk, '#818cf8', false, 'HTTPS/MQTT');
+            }
+        });
+    </script>
+</body>
+</html>
