@@ -301,4 +301,64 @@ if __name__ == "__main__":
                 const canvasRect = canvas.getBoundingClientRect();
 
                 const startX = rect1.left - canvasRect.left + rect1.width / 2;
-                const startY = rect1.top - canvasRect.top + (re
+                const startY = rect1.top - canvasRect.top + (reverse ? 0 : rect1.height);
+                const endX = rect2.left - canvasRect.left + rect2.width / 2;
+                const endY = rect2.top - canvasRect.top + (reverse ? rect2.height : 0);
+                
+                let path;
+                const isCrossColumn = el1.closest('#edge-col') !== el2.closest('#edge-col');
+
+                if (isCrossColumn) {
+                    const fromX = rect1.left - canvasRect.left + rect1.width;
+                    const fromY = rect1.top - canvasRect.top + rect1.height / 2;
+                    const toX = rect2.left - canvasRect.left;
+                    const toY = rect2.top - canvasRect.top + rect2.height / 2;
+                    
+                    const midX = fromX + (toX - fromX) / 2;
+                    path = `<path d="M ${fromX} ${fromY} C ${midX} ${fromY}, ${midX} ${toY}, ${toX} ${toY}" stroke="${color}" stroke-width="2.5" fill="none" stroke-dasharray="8 4"/>`;
+
+                } else {
+                     path = `<path d="M ${startX} ${startY} L ${startX} ${startY + (endY - startY)/2} L ${endX} ${startY + (endY - startY)/2} L ${endX} ${endY}" stroke="${color}" stroke-width="2.5" fill="none" />`;
+                }
+
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('class', 'absolute top-0 left-0 w-full h-full pointer-events-none');
+                svg.style.zIndex = '1';
+                svg.innerHTML = path;
+                
+                if (label) {
+                    const labelDiv = document.createElement('div');
+                    labelDiv.className = 'absolute text-xs font-mono px-2 py-1 rounded';
+                    labelDiv.style.color = color;
+                    labelDiv.style.backgroundColor = 'rgba(17, 24, 39, 0.8)';
+                    labelDiv.style.border = `1px solid ${color}`;
+                    labelDiv.textContent = label;
+                    if (isCrossColumn) {
+                       labelDiv.style.left = `${fromX + (toX - fromX) / 2 - 40}px`;
+                       labelDiv.style.top = `${fromY + (toY - fromY) / 2 - 12}px`;
+                    } else {
+                        labelDiv.style.left = `${startX + 5}px`;
+                        labelDiv.style.top = `${startY + (endY-startY)/2 - 12}px`;
+                    }
+                    canvas.appendChild(labelDiv);
+                }
+
+                canvas.appendChild(svg);
+            };
+
+            const pi = document.getElementById('raspberry');
+            const arduino = document.getElementById('arduino');
+            const blynk = document.getElementById('blynk');
+
+            if (pi && arduino && blynk) {
+                 // Intra-Edge Communication
+                drawLine(pi, arduino, '#06b6d4', false, 'I2C Commands');
+                drawLine(arduino, pi, '#06b6d4', true, 'Telemetry');
+
+                // Edge to Cloud Communication
+                drawLine(pi, blynk, '#818cf8', false, 'HTTPS/MQTT');
+            }
+        });
+    </script>
+</body>
+</html>
